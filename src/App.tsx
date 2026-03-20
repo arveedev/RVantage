@@ -34,9 +34,8 @@ function SetupWizard() {
     try {
       // 1. Save Currency Setting
       await db.settings.add({
-        id: 'base_currency',
-        value: setupData.currency,
-        updated_at: new Date()
+        config_key: 'base_currency',
+        config_value: setupData.currency,
       });
 
       // 2. Create Initial Account

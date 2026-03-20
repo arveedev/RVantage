@@ -22,9 +22,8 @@ export interface Account {
 }
 
 export interface Setting {
-  config_key: string;
-  config_value: any;
-  updated_at?: Date;
+  config_key: string;  // This is our primary key
+  config_value: string;
 }
 
 export class RVantageDB extends Dexie {

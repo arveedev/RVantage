@@ -4,11 +4,11 @@ import { db } from '../db/schema';
 import type { Transaction, Account } from '../db/schema'; 
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Wallet, TrendingUp, Bell, ShieldCheck, Zap, ReceiptText, 
+  Wallet, TrendingUp, ShieldCheck, Zap, ReceiptText, 
   ArrowUpRight, ArrowDownRight, Trash2, X, CreditCard, 
-  Settings, Save, Landmark, Percent, Calendar, Plus, RefreshCw, 
-  PiggyBank, Landmark as BankIcon, Briefcase, ShoppingBag, ChevronDown,
-  Loader2, Check, Info, Eye, EyeOff, Users, User, Image as ImageIcon, Key
+  Settings, Landmark, Percent, Calendar, Plus, 
+  PiggyBank, Landmark as BankIcon, Briefcase, ShoppingBag,
+  Loader2, Check, Info, Eye, EyeOff, Users, User
 } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/ToastContext';
@@ -45,7 +45,6 @@ export default function Dashboard() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isProcessingAccount, setIsProcessingAccount] = useState(false);
-  const [isSyncingInflation, setIsSyncingInflation] = useState(false);
   
   const [editingAccount, setEditingAccount] = useState<Partial<Account> | null>(null);
 
@@ -60,14 +59,6 @@ const [config, setConfig] = useState({
   const { refreshFromCloud, syncTransactions, syncSettings, syncAccounts } = useSync();
   const { showToast } = useToast();
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
-  const transformDriveUrl = (url: string) => {
-  if (!url) return '';
-  if (url.includes('drive.google.com')) {
-    const id = url.split('/d/')[1]?.split('/')[0] || url.split('id=')[1];
-    return `https://docs.google.com/uc?export=download&id=${id}`;
-  }
-  return url;
-};
 
   const formatNumber = (val: any) => {
     if (val === null || val === undefined || val === '') return '';
@@ -122,44 +113,6 @@ useEffect(() => {
     });
   }
 }, [settings]);
-
-const fetchInflationRate = async () => {
-  // We pull the key directly from the current config state
-  const apiKey = config.ninja_api_key?.trim();
-  
-  if (!apiKey) {
-    showToast("API KEY MISSING IN SETTINGS", "error");
-    return;
-  }
-
-  setIsSyncingInflation(true);
-  try {
-    const response = await fetch('https://api.api-ninjas.com/v1/inflation?country=Philippines', {
-      method: 'GET',
-      headers: { 
-        'X-Api-Key': apiKey, // This must match exactly what Ninja API expects
-        'Accept': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Status ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    if (Array.isArray(data) && data.length > 0) {
-      const latestRate = data[0].yearly_rate_pct.toString();
-      setConfig(prev => ({ ...prev, inflation_rate: latestRate }));
-      showToast(`SYNCED: ${latestRate}%`, "success");
-    }
-  } catch (e: any) {
-    console.error("Inflation Sync Error:", e.message);
-    showToast("CHECK API KEY / NETWORK", "error");
-  } finally {
-    setIsSyncingInflation(false);
-  }
-};
 
   const transactions = useMemo(() => {
     if (!rawTransactions) return [];
@@ -237,7 +190,6 @@ const fetchInflationRate = async () => {
         id: editingAccount.id || crypto.randomUUID(),
         name: editingAccount.name,
         balance: editingAccount.balance || 0,
-        icon: editingAccount.icon || 'Wallet',
         is_shared: editingAccount.is_shared || false,
         include_in_glance: editingAccount.include_in_glance !== undefined ? editingAccount.include_in_glance : true
       };
@@ -314,11 +266,9 @@ const fetchInflationRate = async () => {
             </div>
             <div className="overflow-x-auto flex gap-4 no-scrollbar pb-2 -mx-2 px-2">
               {accounts?.map((acc) => {
-                const IconComp = ACCOUNT_ICONS.find(i => i.name === acc.icon)?.icon || Wallet;
                 return (
                   <div key={acc.id} onClick={() => { setEditingAccount(acc); setIsAccountModalOpen(true); }} className="min-w-[160px] bg-white/5 border border-white/10 p-4 rounded-2xl flex flex-col gap-2 active:scale-95 transition-all">
                     <div className="flex justify-between items-center text-aura-subtle">
-                      <IconComp size={14} />
                       <span className="text-[9px] font-black uppercase tracking-tighter">{acc.is_shared ? 'Shared' : 'Private'}</span>
                     </div>
                     <p className="text-[10px] font-bold text-aura-subtle truncate">{acc.name}</p>
@@ -472,7 +422,7 @@ const fetchInflationRate = async () => {
                   <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest">Visual Marker</label>
                   <div className="flex justify-between gap-2">
                     {ACCOUNT_ICONS.map(item => (
-                      <button key={item.name} onClick={() => setEditingAccount({...editingAccount, icon: item.name})} className={`flex-1 aspect-square rounded-2xl border flex items-center justify-center transition-all duration-300 ${editingAccount?.icon === item.name ? 'bg-white text-black border-white shadow-xl scale-110' : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'}`}>
+                      <button key={item.name} onClick={() => setEditingAccount({...editingAccount})} className={`flex-1 aspect-square rounded-2xl border flex items-center justify-center transition-all duration-300 ${editingAccount?.icon === item.name ? 'bg-white text-black border-white shadow-xl scale-110' : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'}`}>
                         <item.icon size={20} />
                       </button>
                     ))}

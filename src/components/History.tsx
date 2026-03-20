@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
 import { motion } from 'framer-motion';
-import { ArrowUpRight, ArrowDownLeft, Calendar, Clock } from 'lucide-react';
+import { ArrowUpRight, ArrowDownLeft, Clock } from 'lucide-react';
 
 export default function History() {
   const transactions = useLiveQuery(() => 

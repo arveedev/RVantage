@@ -3,7 +3,7 @@ import { db } from '../db/schema';
 import type { Transaction } from '../db/schema'; 
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, ArrowUpRight, ArrowDownRight, Plus } from 'lucide-react';
+import { X, Check, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/ToastContext';
 

@@ -16,7 +16,6 @@ export function useSync() {
               id: remoteAcc.id,
               balance: parseFloat(remoteAcc.balance),
               name: remoteAcc.name,
-              icon: remoteAcc.icon || 'Wallet',
               is_shared: String(remoteAcc.is_shared).toUpperCase() === 'TRUE',
               include_in_glance: String(remoteAcc.include_in_glance).toUpperCase() === 'TRUE'
             });
@@ -30,7 +29,6 @@ export function useSync() {
               config_key: remoteSetting.config_key,
               // FIX: Explicitly convert to String to prevent "15,30" from being parsed as a timestamp/date
               config_value: String(remoteSetting.config_value),
-              updated_at: new Date()
             });
           }
         }
@@ -107,7 +105,6 @@ export function useSync() {
       id: a.id,
       name: a.name,
       balance: a.balance,
-      icon: a.icon || 'Wallet',
       is_shared: a.is_shared,
       include_in_glance: a.include_in_glance
     }));
