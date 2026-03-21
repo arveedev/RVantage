@@ -1,5 +1,17 @@
 import Dexie, { type Table } from 'dexie';
 
+export interface User {
+  id: string;
+  username: string;
+  password?: string; 
+  last_login: Date;
+}
+
+export interface Session {
+  id: string; // Always 'current'
+  user_id: string;
+}
+
 export interface Transaction {
   id: string; 
   date: Date;
@@ -10,7 +22,8 @@ export interface Transaction {
   is_installment: boolean;
   note?: string;
   synced: number; 
-  type: 'expense' | 'income';
+  type: 'expense' | 'income' | 'transfer';
+  user_id: string; 
 }
 
 export interface Account {
@@ -19,14 +32,20 @@ export interface Account {
   balance: number;
   include_in_glance: boolean;
   is_shared: boolean;
+  icon_marker?: string;
+  icon_color?: string;
+  user_id: string; 
 }
 
 export interface Setting {
-  config_key: string;  // This is our primary key
+  config_key: string; 
   config_value: string;
+  user_id: string; 
 }
 
 export class RVantageDB extends Dexie {
+  users!: Table<User>;
+  session!: Table<Session>;
   transactions!: Table<Transaction>;
   accounts!: Table<Account>;
   settings!: Table<Setting>;
@@ -34,11 +53,12 @@ export class RVantageDB extends Dexie {
   constructor() {
     super('RVantageDB');
     
-    // Version 5: Fixed settings schema to prevent DataError during sync
-    this.version(5).stores({
-      transactions: 'id, date, category, account_id, synced, type, is_installment',
-      accounts: 'id, name, is_shared, include_in_glance',
-      settings: 'config_key'
+    this.version(8).stores({
+      users: 'id, username',
+      session: 'id, user_id',
+      transactions: 'id, date, category, account_id, synced, type, is_installment, user_id',
+      accounts: 'id, name, balance, is_shared, include_in_glance, icon_marker, icon_color, user_id',
+      settings: 'config_key, user_id'
     });
   }
 }

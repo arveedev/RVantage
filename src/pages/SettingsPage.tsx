@@ -1,26 +1,33 @@
 import { useState, useEffect } from 'react';
 import { db } from '../db/schema';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useToast } from '../context/ToastContext';
+import { useToast } from '../context/useToast';
 import { Save, ArrowLeft, TrendingUp, CreditCard } from 'lucide-react';
 
 export default function SettingsPage({ onNavigate }: { onNavigate: (p: any) => void }) {
   const { showToast } = useToast();
-  const settings = useLiveQuery(() => db.settings.toArray());
+  
+  // 1. Get the current active session
+  const session = useLiveQuery(() => db.session.get('current'));
+  
+  // 2. Only fetch settings belonging to this specific user
+  const settings = useLiveQuery(
+    () => session ? db.settings.where('user_id').equals(session.user_id).toArray() : [],
+    [session]
+  );
+
   const [localSettings, setLocalSettings] = useState<any>({});
 
-  // Helper to format number with commas
   const formatComma = (val: any) => {
-    if (val === undefined || val === null) return '';
+    if (val === undefined || val === null || val === '') return '';
     const num = String(val).replace(/,/g, '');
     return num.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   };
 
-  // Helper to strip commas for DB storage
-  const stripComma = (val: string) => Number(val.replace(/,/g, '')) || 0;
+  const stripComma = (val: string) => Number(String(val).replace(/,/g, '')) || 0;
 
   useEffect(() => {
-    if (settings) {
+    if (settings && settings.length > 0) {
       const sMap = settings.reduce((acc, s) => ({ 
         ...acc, 
         [s.config_key]: formatComma(s.config_value) 
@@ -30,20 +37,28 @@ export default function SettingsPage({ onNavigate }: { onNavigate: (p: any) => v
   }, [settings]);
 
   const handleInputChange = (key: string, value: string) => {
-    // Only allow digits and commas
     const cleanValue = value.replace(/[^\d]/g, '');
     setLocalSettings({ ...localSettings, [key]: formatComma(cleanValue) });
   };
 
   const saveSettings = async () => {
+    if (!session?.user_id) {
+      showToast("No active session found", "error");
+      return;
+    }
+
     try {
+      // 3. Map settings to include the correct user_id from the session
       const updates = Object.entries(localSettings).map(([key, val]) => ({
+        user_id: session.user_id, // Dynamically use the logged-in user's ID
         config_key: key,
         config_value: String(stripComma(val as string))
       }));
+
       await db.settings.bulkPut(updates);
       showToast("FINANCIAL REALITY UPDATED", "success");
     } catch (e) {
+      console.error(e);
       showToast("Save failed", "error");
     }
   };
@@ -51,14 +66,13 @@ export default function SettingsPage({ onNavigate }: { onNavigate: (p: any) => v
   return (
     <div className="p-6 pt-12 space-y-8 max-w-md mx-auto">
       <div className="flex items-center gap-4 mb-2">
-        <button onClick={() => onNavigate('dashboard')} className="p-3 bg-white/5 rounded-2xl border border-white/10 active:scale-90 transition-transform">
+        <button onClick={() => onNavigate('dashboard')} className="p-3 bg-white/5 rounded-2xl border border-white/10 active:scale-90 transition-transform text-white">
           <ArrowLeft size={20}/>
         </button>
-        <h1 className="text-3xl font-black tracking-tighter">SETTINGS</h1>
+        <h1 className="text-3xl font-black tracking-tighter text-white uppercase">Settings</h1>
       </div>
 
       <div className="space-y-6">
-        {/* SECTION 1: INCOME */}
         <section className="bg-white/5 p-6 rounded-[2.5rem] border border-white/5">
           <h3 className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
             <TrendingUp size={14}/> Income DNA
@@ -78,7 +92,6 @@ export default function SettingsPage({ onNavigate }: { onNavigate: (p: any) => v
           </div>
         </section>
 
-        {/* SECTION 2: THE BURN */}
         <section className="bg-white/5 p-6 rounded-[2.5rem] border border-white/5">
           <h3 className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
             <CreditCard size={14}/> The Burn

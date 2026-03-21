@@ -5,15 +5,17 @@ import type { Transaction, Account } from '../db/schema';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Wallet, TrendingUp, ShieldCheck, Zap, ReceiptText, 
-  ArrowUpRight, ArrowDownRight, Trash2, X, CreditCard, 
-  Settings, Landmark, Percent, Calendar, Plus, 
-  PiggyBank, Landmark as BankIcon, Briefcase, ShoppingBag,
-  Loader2, Check, Info, Eye, EyeOff, Users, User
+  ArrowUpRight, ArrowDownRight, ArrowLeftRight, Trash2, X, CreditCard, 
+  Settings, PiggyBank, Landmark as BankIcon, Briefcase, ShoppingBag,
+  Loader2, Check, Info, Eye, EyeOff, Users, User, Palette, Plus, LogOut
 } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
-import { useToast } from '../context/ToastContext';
+import { useToast } from '../context/useToast';
+
+// Components
 import AddTransaction from './AddTransaction';
-import GhostForecast from './GhostForecast';
+import CommandCenter from './CommandCenter';
+import Simulator from './Simulator';
 
 const ACCOUNT_ICONS = [
   { name: 'Wallet', icon: Wallet },
@@ -23,19 +25,24 @@ const ACCOUNT_ICONS = [
   { name: 'Shopping', icon: ShoppingBag }
 ];
 
-const CURRENCIES = [
-  { code: 'PHP', label: 'Philippines (PHP ₱)', country: 'Philippines' },
-  { code: 'USD', label: 'United States (USD $)', country: 'United States' },
-  { code: 'EUR', label: 'Euro Zone (EUR €)', country: 'Germany' },
-  { code: 'GBP', label: 'United Kingdom (GBP £)', country: 'United Kingdom' },
-  { code: 'JPY', label: 'Japan (JPY ¥)', country: 'Japan' },
-  { code: 'AUD', label: 'Australia (AUD $)', country: 'Australia' },
-  { code: 'CAD', label: 'Canada (CAD $)', country: 'Canada' },
-  { code: 'SGD', label: 'Singapore (SGD $)', country: 'Singapore' },
+const PRESET_COLORS = [
+  '#00d1ff', // Aura Blue
+  '#00E676', // Income Green
+  '#FF3D00', // Expense Red
+  '#FFD600', // Yellow
+  '#AF52DE', // Purple
+  '#FF2D55', // Pink
+  '#FFFFFF', // White
 ];
 
-
 export default function Dashboard() {
+  const { showToast } = useToast();
+  const { refreshFromCloud, syncTransactions, syncSettings, syncAccounts } = useSync();
+  
+  // 1. Get Current Session
+  const session = useLiveQuery(() => db.session.get('current'));
+  const userId = session?.user_id;
+
   const [activeTab, setActiveTab] = useState<'home' | 'simulator'>('home');
   const [timeFilter, setTimeFilter] = useState<'day' | 'week' | 'month' | 'all'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -45,20 +52,34 @@ export default function Dashboard() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isProcessingAccount, setIsProcessingAccount] = useState(false);
-  
   const [editingAccount, setEditingAccount] = useState<Partial<Account> | null>(null);
 
-const [config, setConfig] = useState({
-  base_currency: 'PHP',
-  payday_schedule: '15, 30',
-  inflation_rate: '3',
-  monthly_income: '0',
-  fixed_bills: '0'
-});
+  const [config, setConfig] = useState({
+    base_currency: 'PHP',
+    payday_schedule: '15, 30',
+    inflation_rate: '3',
+    monthly_income: '0',
+    fixed_bills: '0',
+    fixed_bills_list: '[]',
+    deductions: '[]', 
+    net_income: '0'   
+  });
 
-  const { refreshFromCloud, syncTransactions, syncSettings, syncAccounts } = useSync();
-  const { showToast } = useToast();
-  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const longPressTimer = useRef<any>(null);
+
+  // 2. Filter Queries by UserID
+  const accounts = useLiveQuery(
+    () => userId ? db.accounts.where('user_id').equals(userId).toArray() : [],
+    [userId]
+  );
+  const rawTransactions = useLiveQuery(
+    () => userId ? db.transactions.where('user_id').equals(userId).toArray() : [],
+    [userId]
+  );
+  const settings = useLiveQuery(
+    () => userId ? db.settings.where('user_id').equals(userId).toArray() : [],
+    [userId]
+  );
 
   const formatNumber = (val: any) => {
     if (val === null || val === undefined || val === '') return '';
@@ -69,50 +90,41 @@ const [config, setConfig] = useState({
   const cleanNumber = (val: string) => val.replace(/,/g, '');
 
   useEffect(() => {
-    const bootSequence = async () => {
-      await syncTransactions();
-      await refreshFromCloud();
-    };
-    bootSequence();
-  }, []);
+    if (userId) {
+      const bootSequence = async () => {
+        await syncTransactions();
+        await syncSettings(); 
+        await refreshFromCloud();
+      };
+      bootSequence();
+    }
+  }, [userId]);
 
-  const accounts = useLiveQuery(() => db.accounts.toArray());
-  const rawTransactions = useLiveQuery(() => db.transactions.toArray());
-  const settings = useLiveQuery(() => db.settings.toArray());
+  useEffect(() => {
+    if (settings && settings.length > 0) {
+      const getVal = (key: string, fallback: string) => {
+        const found = settings.find(s => s.config_key === key);
+        return found ? String(found.config_value) : fallback;
+      };
 
-useEffect(() => {
-  if (settings && settings.length > 0) {
-    const getVal = (key: string, fallback: string) => {
-      const found = settings.find(s => s.config_key === key);
-      if (!found) return fallback;
-      
-      let val = found.config_value;
+      setConfig({
+        base_currency: getVal('base_currency', 'PHP'),
+        payday_schedule: getVal('payday_schedule', '15, 30'),
+        inflation_rate: getVal('inflation_rate', '3'),
+        monthly_income: getVal('monthly_income', '0'),
+        fixed_bills: getVal('fixed_bills', '0'),
+        fixed_bills_list: getVal('fixed_bills_list', '[]'),
+        deductions: getVal('deductions', '[]'),
+        net_income: getVal('net_income', '0')
+      });
+    }
+  }, [settings]);
 
-      // 1. SPECIFIC FIX FOR PAYDAY SCHEDULE
-      if (key === 'payday_schedule') {
-        const strVal = String(val);
-        // If the string is unusually long (like your timestamp 20261024...)
-        // we ignore the corrupted sync value and keep the local fallback or 
-        // try to see if it's a valid date to extract the day.
-        if (strVal.length > 10 && !strVal.includes(',')) {
-          const d = new Date(val);
-          return !isNaN(d.getTime()) ? String(d.getDate()) : fallback;
-        }
-        return strVal || fallback;
-      }
-      
-      return String(val) || fallback;
-    };
-
-    setConfig({
-      base_currency: getVal('base_currency', 'PHP'),
-      payday_schedule: getVal('payday_schedule', '10, 25'),
-      inflation_rate: getVal('inflation_rate', '3'),
-      monthly_income: getVal('monthly_income', '0'),
-      fixed_bills: getVal('fixed_bills', '0')
-    });
-  }
-}, [settings]);
+  const handleLogout = async () => {
+    await db.session.delete('current');
+    showToast("VAULT LOCKED", "success");
+    window.location.reload();
+  };
 
   const transactions = useMemo(() => {
     if (!rawTransactions) return [];
@@ -167,23 +179,8 @@ useEffect(() => {
     return { total: totalBalance, safe: totalBalance - upcoming, daysToInflow: isNaN(daysToInflow) ? 0 : daysToInflow, variableSpendAverage };
   }, [accounts, transactions, config]);
 
-  const handleSaveConfig = async () => {
-    try {
-      const keys = Object.keys(config) as Array<keyof typeof config>;
-      const settingsToSync = keys.map(key => ({ config_key: key, config_value: String(config[key]) }));
-      for (const item of settingsToSync) {
-        await db.settings.put(item);
-      }
-      await syncSettings(settingsToSync);
-      showToast("SYSTEM RECONFIGURED", "success");
-      setIsSettingsOpen(false);
-    } catch (e) { 
-      showToast("Save Failed", "error"); 
-    }
-  };
-
   const handleSaveAccount = async () => {
-    if (!editingAccount?.name) return;
+    if (!editingAccount?.name || !userId) return;
     setIsProcessingAccount(true);
     try {
       const newAcc: Account = {
@@ -191,7 +188,10 @@ useEffect(() => {
         name: editingAccount.name,
         balance: editingAccount.balance || 0,
         is_shared: editingAccount.is_shared || false,
-        include_in_glance: editingAccount.include_in_glance !== undefined ? editingAccount.include_in_glance : true
+        include_in_glance: editingAccount.include_in_glance !== undefined ? editingAccount.include_in_glance : true,
+        icon_marker: editingAccount.icon_marker || 'Wallet',
+        icon_color: editingAccount.icon_color || '#00d1ff',
+        user_id: userId 
       };
       await db.accounts.put(newAcc);
       await syncAccounts();
@@ -246,8 +246,8 @@ useEffect(() => {
       >
         <div className="absolute top-0 right-0 p-6 opacity-10"><Wallet size={48} /></div>
         <span className="text-aura-subtle font-black uppercase tracking-[0.2em] text-[10px]">Total Liquidity</span>
-        <h1 className="text-5xl font-black tracking-tighter mt-2 tabular-nums">
-          <span className="text-aura-accent text-xl mr-2 font-bold">{config.base_currency}</span>
+        <h1 className="text-5xl font-black tracking-tighter mt-2 tabular-nums flex items-baseline text-white">
+          <span className="text-aura-accent text-xl font-bold opacity-70 mr-2">{config.base_currency}</span>
           {financialIntel.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
         </h1>
       </div>
@@ -262,17 +262,23 @@ useEffect(() => {
           >
             <div className="flex justify-between items-center px-2">
               <span className="text-[10px] font-black text-aura-subtle uppercase tracking-widest">Active Accounts</span>
-              <button onClick={() => { setEditingAccount({ include_in_glance: true, is_shared: false }); setIsAccountModalOpen(true); }} className="text-aura-accent text-[10px] font-black uppercase">+ Add Account</button>
+              <button onClick={() => { setEditingAccount({ include_in_glance: true, is_shared: false, icon_marker: 'Wallet', icon_color: '#00d1ff' }); setIsAccountModalOpen(true); }} className="text-aura-accent text-[10px] font-black uppercase">+ Add Account</button>
             </div>
             <div className="overflow-x-auto flex gap-4 no-scrollbar pb-2 -mx-2 px-2">
               {accounts?.map((acc) => {
+                const IconComponent = ACCOUNT_ICONS.find(i => i.name === acc.icon_marker)?.icon || Wallet;
+                const customColor = acc.icon_color || '#00d1ff';
                 return (
-                  <div key={acc.id} onClick={() => { setEditingAccount(acc); setIsAccountModalOpen(true); }} className="min-w-[160px] bg-white/5 border border-white/10 p-4 rounded-2xl flex flex-col gap-2 active:scale-95 transition-all">
+                  <div key={acc.id} onClick={() => { setEditingAccount(acc); setIsAccountModalOpen(true); }} className="min-w-[160px] bg-white/5 border border-white/10 p-4 rounded-2xl flex flex-col gap-2 active:scale-95 transition-all" style={{ borderLeft: `4px solid ${customColor}` }}>
                     <div className="flex justify-between items-center text-aura-subtle">
+                      <IconComponent size={14} style={{ color: customColor }} />
                       <span className="text-[9px] font-black uppercase tracking-tighter">{acc.is_shared ? 'Shared' : 'Private'}</span>
                     </div>
                     <p className="text-[10px] font-bold text-aura-subtle truncate">{acc.name}</p>
-                    <p className="text-sm font-black tabular-nums">{config.base_currency} {acc.balance.toLocaleString()}</p>
+                    <p className="text-sm font-black tabular-nums flex items-baseline text-white">
+                      <span className="text-[10px] opacity-70 mr-1">{config.base_currency}</span> 
+                      {acc.balance.toLocaleString()}
+                    </p>
                   </div>
                 );
               })}
@@ -283,14 +289,17 @@ useEffect(() => {
 
       <div className="grid grid-cols-2 gap-4">
         <div className="bg-white/5 p-6 rounded-[2rem] border border-white/5 relative overflow-hidden">
-          <div className="absolute -right-2 -bottom-2 text-aura-accent/10"><ShieldCheck size={64} /></div>
-          <span className="text-[10px] font-black text-aura-subtle uppercase tracking-widest block mb-2">Safe-to-Spend</span>
-          <p className="text-2xl font-black tabular-nums">{config.base_currency}{financialIntel.safe.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          <div className="absolute -right-1 -bottom-1 text-aura-accent opacity-20"><ShieldCheck size={48} /></div>
+          <span className="text-[10px] font-black text-aura-accent uppercase tracking-widest block mb-2 relative z-10">Safe-to-Spend</span>
+          <p className="text-2xl font-black tabular-nums relative z-10 flex items-baseline text-white">
+            <span className="text-xs opacity-70 mr-1">{config.base_currency}</span>
+            {financialIntel.safe.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+          </p>
         </div>
         <div className="bg-white/5 p-6 rounded-[2rem] border border-white/5 relative overflow-hidden">
-          <div className="absolute -right-2 -bottom-2 text-yellow-500/10"><Zap size={64} /></div>
-          <span className="text-[10px] font-black text-aura-subtle uppercase tracking-widest block mb-2">Inflow In</span>
-          <p className="text-2xl font-black tabular-nums">{financialIntel.daysToInflow} <span className="text-xs text-aura-subtle uppercase font-bold">Days</span></p>
+          <div className="absolute -right-1 -bottom-1 text-yellow-500 opacity-20"><Zap size={48} /></div>
+          <span className="text-[10px] font-black text-aura-subtle uppercase tracking-widest block mb-2 relative z-10">Inflow In</span>
+          <p className="text-2xl font-black tabular-nums relative z-10 text-white">{financialIntel.daysToInflow} <span className="text-xs text-aura-subtle uppercase font-bold">Days</span></p>
         </div>
       </div>
 
@@ -309,32 +318,56 @@ useEffect(() => {
         </div>
 
         <div className="px-4 pb-6 overflow-y-auto max-h-[400px] no-scrollbar space-y-3">
-          {filteredTransactions.map((t) => (
-            <motion.div key={t.id} layout className="relative" onPointerDown={() => startPress(t.id)} onPointerUp={endPress} onPointerLeave={endPress}>
-              <div onClick={() => !deletingId && (setEditingTransaction(t), setIsModalOpen(true))} className={`flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 transition-all duration-300 ${deletingId === t.id ? '-translate-x-20 opacity-50' : ''}`}>
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${t.amount < 0 ? 'bg-red-500/10 text-red-500' : 'bg-aura-accent/10 text-aura-accent'}`}>
-                    {t.amount < 0 ? <ArrowDownRight size={18} /> : <ArrowUpRight size={18} />}
+          {filteredTransactions.map((t) => {
+            const isTransfer = t.type === 'transfer' || t.category === 'Transfer';
+            const isIncome = t.amount > 0 && !isTransfer;
+            const isExpense = t.amount < 0 && !isTransfer;
+
+            let iconStyle = {};
+            let Icon = ArrowLeftRight;
+            let amountStyle = { color: "rgba(255,255,255,0.6)" };
+
+            if (isIncome) {
+              iconStyle = { backgroundColor: 'rgba(0, 230, 118, 0.15)', color: '#00E676' };
+              amountStyle = { color: "#00E676" };
+              Icon = ArrowUpRight;
+            } else if (isExpense) {
+              iconStyle = { backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#ef4444' };
+              amountStyle = { color: "#ef4444" };
+              Icon = ArrowDownRight;
+            }
+
+            return (
+              <motion.div key={t.id} layout className="relative" onPointerDown={() => startPress(t.id)} onPointerUp={endPress} onPointerLeave={endPress}>
+                <div onClick={() => !deletingId && (setEditingTransaction(t), setIsModalOpen(true))} className={`flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5 transition-all duration-300 ${deletingId === t.id ? '-translate-x-20 opacity-50' : ''}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={iconStyle}>
+                      <Icon size={18} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold leading-tight text-white">{t.category}</p>
+                      {isTransfer && t.note && (
+                        <p className="text-[10px] text-aura-accent/70 font-medium lowercase">{t.note}</p>
+                      )}
+                      <p className="text-[10px] text-aura-subtle uppercase font-bold">{new Date(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-bold leading-tight">{t.category}</p>
-                    <p className="text-[10px] text-aura-subtle uppercase font-bold">{new Date(t.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</p>
-                  </div>
+                  <p className="font-black tabular-nums flex items-baseline" style={amountStyle}>
+                    <span className="text-[10px] opacity-70 mr-1">{config.base_currency}</span>
+                    {Math.abs(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
                 </div>
-                <p className={`font-black tabular-nums ${t.amount < 0 ? 'text-white' : 'text-aura-accent'}`}>
-                  {t.amount < 0 ? '-' : '+'}{config.base_currency}{Math.abs(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </p>
-              </div>
-              <AnimatePresence>
-                {deletingId === t.id && (
-                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="absolute right-0 top-0 bottom-0 flex gap-2">
-                    <button onClick={() => handleDelete(t)} className="w-16 h-full bg-red-600 rounded-2xl flex items-center justify-center text-white"><Trash2 size={20}/></button>
-                    <button onClick={() => setDeletingId(null)} className="w-12 h-full bg-white/10 rounded-2xl flex items-center justify-center text-white"><X size={18}/></button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          ))}
+                <AnimatePresence>
+                  {deletingId === t.id && (
+                    <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="absolute right-0 top-0 bottom-0 flex gap-2">
+                      <button onClick={() => handleDelete(t)} className="w-16 h-full bg-red-600 rounded-2xl flex items-center justify-center text-white"><Trash2 size={20}/></button>
+                      <button onClick={() => setDeletingId(null)} className="w-12 h-full bg-white/10 rounded-2xl flex items-center justify-center text-white"><X size={18}/></button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            );
+          })}
         </div>
       </section>
     </motion.div>
@@ -342,32 +375,39 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen bg-aura-black pb-40 text-white selection:bg-aura-accent/30">
-<header className="sticky top-0 z-[60] bg-aura-black/80 backdrop-blur-xl border-b border-white/5 p-4 flex justify-between items-center">
-  <div className="flex items-center gap-3">
-    <div className="w-10 h-10 bg-aura-accent/10 border border-aura-accent/20 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(0,209,255,0.2)]">
-      <Zap size={20} className="text-aura-accent" fill="currentColor" />
-    </div>
-    <div>
-      <span className="font-black tracking-tighter uppercase text-sm block leading-none">RVantage</span>
-      <span className="text-[8px] font-bold text-aura-subtle uppercase tracking-[0.2em]">Command v3.0</span>
-    </div>
-  </div>
-  <div className="flex gap-3 items-center">
-    <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-white/5 rounded-full border border-white/10 active:scale-90 transition-all">
-      <Settings size={20} className="text-aura-subtle" />
-    </button>
-  </div>
-</header>
+      <header className="sticky top-0 z-[60] bg-aura-black/80 backdrop-blur-xl border-b border-white/5 p-4 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-aura-accent/10 border border-aura-accent/20 rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(0,209,255,0.2)]">
+            <Zap size={20} className="text-aura-accent" fill="currentColor" />
+          </div>
+          <div>
+            <span className="font-black tracking-tighter uppercase text-sm block leading-none text-white">RVantage</span>
+            <span className="text-[8px] font-bold text-aura-accent uppercase tracking-[0.2em]">Command v3.0</span>
+          </div>
+        </div>
+        <div className="flex gap-2 items-center">
+          <button onClick={() => setIsSettingsOpen(true)} className="p-2.5 bg-white/5 rounded-full border border-white/10 active:scale-90 transition-all">
+            <Settings size={20} className="text-aura-subtle" />
+          </button>
+          <button onClick={handleLogout} className="p-2.5 bg-red-500/10 rounded-full border border-red-500/20 active:scale-90 transition-all">
+            <LogOut size={20} className="text-red-500" />
+          </button>
+        </div>
+      </header>
 
       <main className="p-6 max-w-lg mx-auto relative z-[10]">
         <AnimatePresence mode="wait">
-          {activeTab === 'home' ? renderHome() : (
-            <GhostForecast 
-              variableSpendAvg={financialIntel.variableSpendAverage} 
-              baseIncome={Number(config.monthly_income)}
-              fixedBills={Number(config.fixed_bills)}
-              inflation={Number(config.inflation_rate)}
-              currentBalance={financialIntel.total}
+          {activeTab === 'home' ? (
+            <motion.div key="home-view">
+              {renderHome()}
+            </motion.div>
+          ) : (
+            <Simulator 
+              key="simulator-tab"
+              config={config}
+              financialIntel={financialIntel}
+              transactions={transactions}
+              baseCurrency={config.base_currency}
             />
           )}
         </AnimatePresence>
@@ -398,38 +438,55 @@ useEffect(() => {
       <AnimatePresence>
         {isAccountModalOpen && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[250] bg-black/95 backdrop-blur-2xl p-6 flex flex-col justify-end sm:justify-center">
-            <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="max-w-md mx-auto w-full bg-aura-card border border-white/10 rounded-[3rem] p-8 shadow-3xl space-y-8">
+            <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="max-w-md mx-auto w-full bg-aura-card border border-white/10 rounded-[3rem] p-8 shadow-3xl space-y-8 max-h-[90vh] overflow-y-auto no-scrollbar">
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black italic tracking-tighter uppercase">Account Logic</h2>
+                  <h2 className="text-2xl font-black italic tracking-tighter uppercase text-white">Account Logic</h2>
                   <p className="text-[10px] text-aura-subtle font-bold tracking-widest uppercase">Configuration Node</p>
                 </div>
                 <button onClick={() => setIsAccountModalOpen(false)} className="p-3 bg-white/5 rounded-full text-white/40 active:scale-90 transition-transform"><X size={20}/></button>
               </div>
+              
               <div className="space-y-6">
                 <div className="space-y-2 group">
-                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest flex items-center gap-2"><Info size={10} /> Account Identity</label>
+                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest flex items-center gap-2 text-white/60"><Info size={10} /> Account Identity</label>
                   <input type="text" placeholder="e.g. Cold Storage" value={editingAccount?.name || ''} onChange={e => setEditingAccount({...editingAccount, name: e.target.value})} className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 font-bold text-lg outline-none focus:border-aura-accent focus:bg-white/10 transition-all text-white placeholder:text-white/10" />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest flex items-center gap-2"><CreditCard size={10} /> Liquid Assets</label>
+                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest flex items-center gap-2 text-white/60"><CreditCard size={10} /> Liquid Assets</label>
                   <div className="relative">
                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-aura-accent font-black text-xl">{config.base_currency}</span>
                     <input type="text" value={formatNumber(editingAccount?.balance)} onChange={e => setEditingAccount({...editingAccount, balance: Number(cleanNumber(e.target.value))})} className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-16 font-black text-4xl outline-none focus:border-aura-accent transition-all text-white tabular-nums" />
                   </div>
                 </div>
+
                 <div className="space-y-3">
-                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest">Visual Marker</label>
+                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest text-white/60 flex items-center gap-2"><Palette size={10} /> Visual Marker & Color</label>
                   <div className="flex justify-between gap-2">
                     {ACCOUNT_ICONS.map(item => (
-                      <button key={item.name} onClick={() => setEditingAccount({...editingAccount})} className={`flex-1 aspect-square rounded-2xl border flex items-center justify-center transition-all duration-300 ${editingAccount?.icon === item.name ? 'bg-white text-black border-white shadow-xl scale-110' : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'}`}>
+                      <button 
+                        key={item.name} 
+                        onClick={() => setEditingAccount({...editingAccount, icon_marker: item.name})} 
+                        className={`flex-1 aspect-square rounded-2xl border flex items-center justify-center transition-all duration-300 ${editingAccount?.icon_marker === item.name ? 'bg-white text-black border-white shadow-xl scale-110' : 'bg-white/5 border-white/10 text-white/40 hover:border-white/20'}`}
+                      >
                         <item.icon size={20} />
                       </button>
                     ))}
                   </div>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {PRESET_COLORS.map(color => (
+                      <button 
+                        key={color} 
+                        onClick={() => setEditingAccount({...editingAccount, icon_color: color})}
+                        className={`w-8 h-8 rounded-full border-2 transition-all ${editingAccount?.icon_color === color ? 'border-white scale-125' : 'border-transparent'}`}
+                        style={{ backgroundColor: color }}
+                      />
+                    ))}
+                  </div>
                 </div>
+
                 <div className="space-y-4 pt-2">
-                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest">Toggle States</label>
+                  <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest text-white/60">Toggle States</label>
                   <div className="grid grid-cols-2 gap-3">
                     <button onClick={() => setEditingAccount({...editingAccount, is_shared: !editingAccount?.is_shared})} className={`flex flex-col items-center gap-2 p-4 rounded-3xl border transition-all duration-300 ${editingAccount?.is_shared ? 'bg-[#00d1ff]/10 border-[#00d1ff] text-[#00d1ff]' : 'bg-transparent border-white/10 text-white/20'}`}>
                       {editingAccount?.is_shared ? <Users size={20} /> : <User size={20} />}
@@ -442,6 +499,7 @@ useEffect(() => {
                   </div>
                 </div>
               </div>
+
               <div className="flex flex-col gap-3 pt-4">
                 <button disabled={isProcessingAccount} onClick={handleSaveAccount} className="w-full bg-white text-black font-black p-6 rounded-[2rem] flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 shadow-[0_20px_40px_rgba(255,255,255,0.1)] hover:bg-aura-accent">
                   {isProcessingAccount ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} strokeWidth={3} />} 
@@ -460,88 +518,13 @@ useEffect(() => {
 
       <AnimatePresence>
         {isSettingsOpen && (
-  <motion.div className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex flex-col">
-    <div className="p-6 flex justify-between items-center bg-black/40 border-b border-white/5">
-      <div>
-        <h2 className="text-2xl font-black tracking-tighter text-white uppercase">Command Center</h2>
-        <p className="text-[10px] text-aura-subtle font-black tracking-[0.2em] uppercase">System Parameters</p>
-      </div>
-      <button onClick={() => setIsSettingsOpen(false)} className="p-3 bg-white/5 rounded-full text-white/40"><X size={24} /></button>
-    </div>
-
-    <div className="flex-1 p-6 space-y-8 overflow-y-auto no-scrollbar pb-32">
-      {/* Currency Section */}
-      <div className="space-y-4">
-        <label className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em] flex items-center gap-2">
-          <Landmark size={12} className="text-aura-accent"/> Regional Currency
-        </label>
-        <select 
-          value={config.base_currency} 
-          onChange={e => setConfig({...config, base_currency: e.target.value})} 
-          className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl font-bold focus:border-aura-accent outline-none appearance-none text-white"
-        >
-          {CURRENCIES.map(c => <option key={c.code} value={c.code} className="bg-[#111]">{c.label}</option>)}
-        </select>
-      </div>
-
-      {/* Payday Section - Preserves Comma Format */}
-      <div className="space-y-4">
-        <label className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em] flex items-center gap-2">
-          <Calendar size={12} className="text-aura-accent"/> Payday Schedule
-        </label>
-        <input 
-  type="text" 
-  value={config.payday_schedule} // This will now use the sanitized version
-  onChange={e => setConfig({...config, payday_schedule: e.target.value})} 
-  className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl font-bold focus:border-aura-accent outline-none text-white" 
-  placeholder="e.g. 10, 25" 
-/>
-        <p className="text-[8px] text-white/20 uppercase font-bold px-1">Separate dates with commas for multi-inflow tracking.</p>
-      </div>
-
-      {/* Manual Inflation Section */}
-      <div className="space-y-4">
-        <label className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em] flex items-center gap-2">
-          <Percent size={12} className="text-aura-accent"/> Manual Inflation Rate (%)
-        </label>
-        <input 
-          type="number" 
-          value={config.inflation_rate} 
-          onChange={e => setConfig({...config, inflation_rate: e.target.value})} 
-          className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl font-bold focus:border-aura-accent outline-none transition-all text-white" 
-        />
-      </div>
-
-      {/* Income & Bills */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="space-y-4">
-          <label className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em]">Monthly Income</label>
-          <input 
-            type="text" 
-            value={formatNumber(config.monthly_income)} 
-            onChange={e => setConfig({...config, monthly_income: cleanNumber(e.target.value)})} 
-            className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl font-bold text-white outline-none" 
+          <CommandCenter 
+            isOpen={isSettingsOpen} 
+            onClose={() => setIsSettingsOpen(false)} 
+            config={config} 
+            setConfig={setConfig} 
           />
-        </div>
-        <div className="space-y-4">
-          <label className="text-[10px] font-black text-aura-subtle uppercase tracking-[0.2em]">Fixed Bills</label>
-          <input 
-            type="text" 
-            value={formatNumber(config.fixed_bills)} 
-            onChange={e => setConfig({...config, fixed_bills: cleanNumber(e.target.value)})} 
-            className="w-full bg-white/5 border border-white/10 p-5 rounded-2xl font-bold text-white outline-none" 
-          />
-        </div>
-      </div>
-    </div>
-
-    <div className="p-6 bg-aura-black/80 backdrop-blur-xl border-t border-white/5">
-      <button onClick={handleSaveConfig} className="w-full bg-white text-black font-black p-6 rounded-[2rem] flex items-center justify-center gap-3 active:scale-95 transition-all">
-        <Check size={20} strokeWidth={3} /> SAVE CONFIGURATION
-      </button>
-    </div>
-  </motion.div>
-)}
+        )}
       </AnimatePresence>
     </div>
   );

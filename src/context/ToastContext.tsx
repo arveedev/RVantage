@@ -1,14 +1,7 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, type ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, AlertCircle, Info } from 'lucide-react';
-
-type ToastType = 'success' | 'error' | 'info';
-
-interface ToastContextType {
-  showToast: (msg: string, type?: ToastType) => void;
-}
-
-const ToastContext = createContext<ToastContextType | undefined>(undefined);
+import { ToastContext, type ToastType } from './useToast';
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<{ msg: string; type: ToastType; visible: boolean }>({
@@ -17,16 +10,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     visible: false,
   });
   
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showToast = useCallback((msg: string, type: ToastType = 'success') => {
-    // Clear any existing timer to prevent premature closing of new toast
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
     
     setToast({ msg, type, visible: true });
     
     timerRef.current = setTimeout(() => {
       setToast(prev => ({ ...prev, visible: false }));
+      timerRef.current = null;
     }, 3000);
   }, []);
 
@@ -55,9 +50,3 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     </ToastContext.Provider>
   );
 }
-
-export const useToast = () => {
-  const context = useContext(ToastContext);
-  if (!context) throw new Error('useToast must be used within ToastProvider');
-  return context;
-};

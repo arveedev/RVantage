@@ -1,9 +1,14 @@
+// utils/forecaster.ts
+
 export interface ForecastResult {
   month: number;
   balance: number;
   installment: number;
   percentage: number;
   status: 'safe' | 'warning' | 'danger';
+  baseSpend: number;       // The original average spending
+  inflationImpact: number; // The extra cost added by inflation ONLY
+  inflatedSpend: number;   // The total spending for that month (Base + Impact)
 }
 
 interface ForecastInput {
@@ -15,11 +20,10 @@ interface ForecastInput {
   interestRate: number;
   termMonths: number;
   isCash: boolean;
-  inflation: number; // Added from MPDD
+  inflation: number; // From MPDD (e.g., 3 for 3%)
 }
 
 export const calculateGhostForecast = (input: ForecastInput): ForecastResult[] => {
-  const curBal = Number(input.currentBalance) || 0;
   const inc = Number(input.monthlyIncome) || 0;
   const bills = Number(input.fixedBills) || 0;
   const vSpend = Number(input.variableSpend) || 0;
@@ -29,29 +33,58 @@ export const calculateGhostForecast = (input: ForecastInput): ForecastResult[] =
   const annualInflation = Number(input.inflation || 3) / 100;
 
   const projections: ForecastResult[] = [];
-  let runningBalance = input.isCash ? (curBal - price) : curBal;
+  
+  /**
+   * FIX: GHOST ISOLATION
+   * We set the starting balance to 0. 
+   * This ensures we are forecasting the IMPACT on your monthly budget, 
+   * not adding to your existing real-world savings.
+   */
+  let runningBalance = input.isCash ? (0 - price) : 0;
 
+  // Standard Amortization Formula
   const i = (rate / 100) / 12;
   const n = term;
   const monthlyInstallment = (!input.isCash && price > 0)
     ? (i > 0 ? (price * i * Math.pow(1 + i, n)) / (Math.pow(1 + i, n) - 1) : price / n)
     : 0;
 
-  for (let m = 1; m <= 24; m++) {
+  // DYNAMIC TIMELINE: Project at least 24 months or the full term
+  const maxMonths = Math.max(24, n + 2);
+
+  for (let m = 1; m <= maxMonths; m++) {
     const monthlyInflation = annualInflation / 12;
-    const inflatedVariableSpend = vSpend * Math.pow(1 + monthlyInflation, m);
-    const activeInstallment = m <= n ? monthlyInstallment : 0;
     
-    const monthlyNet = inc - bills - inflatedVariableSpend - activeInstallment;
-    runningBalance += monthlyNet;
+    // Calculate total spend with compounded inflation
+    const totalInflatedVariableSpend = vSpend * Math.pow(1 + monthlyInflation, m);
+    
+    // Inflation cost only
+    const inflationOnlyCost = totalInflatedVariableSpend - vSpend;
+    
+    // Installment applies only during the term
+    const activeInstallment = (!input.isCash && m <= n) ? monthlyInstallment : 0;
+    
+    // Total outgoings for the month
+    const totalMonthlyOutflow = bills + totalInflatedVariableSpend + activeInstallment;
+    
+    /**
+     * MATH PROCESS:
+     * We start with the ghost balance, add the income, then subtract expenses.
+     * This shows your cumulative "Ghost Savings" or "Ghost Debt" month by month.
+     */
+    runningBalance = (runningBalance + inc) - totalMonthlyOutflow;
 
-    const monthlyOutflow = bills + inflatedVariableSpend + activeInstallment;
-    
+    // Status logic: Since this is a ghost forecast, 'danger' means the purchase 
+    // puts you in the negative relative to your monthly earnings.
     let status: 'safe' | 'warning' | 'danger' = 'safe';
-    if (runningBalance <= 0) status = 'danger';
-    else if (runningBalance < monthlyOutflow * 1.5) status = 'warning';
+    if (runningBalance <= 0) {
+      status = 'danger';
+    } else if (runningBalance < totalMonthlyOutflow * 1.5) {
+      status = 'warning';
+    }
 
-    const maxReference = curBal + inc;
+    // Percentage based on a theoretical max year of income
+    const maxReference = inc * 12;
     const percentage = Math.max(0, Math.min(100, (runningBalance / maxReference) * 100));
 
     projections.push({
@@ -59,7 +92,10 @@ export const calculateGhostForecast = (input: ForecastInput): ForecastResult[] =
       balance: runningBalance,
       installment: activeInstallment,
       percentage,
-      status
+      status,
+      baseSpend: vSpend,
+      inflationImpact: inflationOnlyCost,
+      inflatedSpend: totalInflatedVariableSpend
     });
   }
 

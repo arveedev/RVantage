@@ -3,9 +3,10 @@ import { db } from '../db/schema';
 import type { Transaction } from '../db/schema'; 
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { X, Check, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Wallet, Landmark as BankIcon, PiggyBank, Briefcase, ShoppingBag } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
-import { useToast } from '../context/ToastContext';
+import { useToast } from '../context/useToast';
+import { useAuth } from './AuthContext'; // Import session awareness
 
 interface Props { 
   isOpen: boolean; 
@@ -13,14 +14,36 @@ interface Props {
   editData?: Transaction | null; 
 }
 
+const ACCOUNT_ICONS = [
+  { name: 'Wallet', icon: Wallet },
+  { name: 'Bank', icon: BankIcon },
+  { name: 'Savings', icon: PiggyBank },
+  { name: 'Work', icon: Briefcase },
+  { name: 'Shopping', icon: ShoppingBag }
+];
+
 export default function AddTransaction({ isOpen, onClose, editData }: Props) {
-  const { syncTransactions } = useSync();
+  const { user } = useAuth(); // Get current user session
+  const { syncTransactions, syncAccounts } = useSync();
   const { showToast } = useToast();
   
   const [displayAmount, setDisplayAmount] = useState(""); 
-  const [rawAmount, setRawAmount] = useState("");         
+  const [rawAmount, setRawAmount] = useState("");          
   const [category, setCategory] = useState("");
-  const [type, setType] = useState<'expense' | 'income'>('expense');
+  const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense');
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [targetAccountId, setTargetAccountId] = useState<string>("");
+
+  // Filter queries by user_id
+  const accounts = useLiveQuery(
+    () => db.accounts.where('user_id').equals(user?.id || '').toArray(),
+    [user?.id]
+  );
+  
+  const transactions = useLiveQuery(
+    () => db.transactions.where('user_id').equals(user?.id || '').toArray(),
+    [user?.id]
+  );
 
   useEffect(() => {
     if (editData && isOpen) {
@@ -28,16 +51,23 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
       setRawAmount(absAmount.toString());
       setDisplayAmount(absAmount.toLocaleString('en-US'));
       setCategory(editData.category);
-      setType(editData.amount < 0 ? 'expense' : 'income');
+      if (editData.category === 'Transfer' || editData.type === 'transfer') {
+        setType('transfer');
+      } else {
+        setType(editData.amount < 0 ? 'expense' : 'income');
+      }
+      setSelectedAccountId(editData.account_id);
     } else if (isOpen) {
       setDisplayAmount(""); 
       setRawAmount(""); 
       setCategory(""); 
       setType('expense');
+      if (accounts && accounts.length > 0) {
+        setSelectedAccountId(accounts[0].id);
+        if (accounts.length > 1) setTargetAccountId(accounts[1].id);
+      }
     }
-  }, [editData, isOpen]);
-
-  const transactions = useLiveQuery(() => db.transactions.toArray());
+  }, [editData, isOpen, accounts]);
   
   const suggestedCategories = useMemo(() => {
     const defaults = ['Food', 'Salary', 'Transport', 'Bills', 'Gym'];
@@ -56,70 +86,129 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   };
 
   const handleSave = async () => {
+    if (!user?.id) {
+      showToast("Authentication required", "error");
+      return;
+    }
+
     const numAmount = parseFloat(rawAmount);
-    
     if (!numAmount || numAmount <= 0) {
       showToast("Enter valid amount", "error");
       return;
     }
-    if (!category.trim()) {
-      showToast("Pick a category", "error");
+
+    if (!selectedAccountId) {
+      showToast("Select a source account", "error");
       return;
+    }
+
+    if (type === 'transfer') {
+      if (!targetAccountId) {
+        showToast("Select a target account", "error");
+        return;
+      }
+      if (selectedAccountId === targetAccountId) {
+        showToast("Source and Target must differ", "error");
+        return;
+      }
+    } else {
+      if (!category.trim()) {
+        showToast("Please select or enter a category", "error");
+        return;
+      }
     }
     
     const finalAmount = type === 'expense' ? -Math.abs(numAmount) : Math.abs(numAmount);
 
     try {
       await db.transaction('rw', [db.transactions, db.accounts], async () => {
-        const account = await db.accounts.get('ACC-001');
+        if (type === 'transfer') {
+          const fromAcc = await db.accounts.get(selectedAccountId);
+          const toAcc = await db.accounts.get(targetAccountId);
 
-        if (editData) {
-          await db.transactions.update(editData.id, {
-            amount: finalAmount,
-            category: category.trim(),
-            type,
-            synced: 0 
-          });
+          if (fromAcc && toAcc) {
+            await db.accounts.update(selectedAccountId, { balance: fromAcc.balance - numAmount });
+            await db.accounts.update(targetAccountId, { balance: toAcc.balance + numAmount });
 
-          if (account) {
-            await db.accounts.update('ACC-001', {
-              balance: account.balance - editData.amount + finalAmount
+            await db.transactions.add({
+              id: crypto.randomUUID(),
+              user_id: user.id, // Stamped with session user_id
+              date: new Date(),
+              amount: -numAmount, 
+              category: toAcc.name, 
+              note: `${fromAcc.name} → ${toAcc.name}`,
+              type: 'transfer',
+              account_id: selectedAccountId,
+              synced: 0,
+              is_shared: false,
+              is_installment: false
             });
           }
         } else {
-          const id = crypto.randomUUID();
-          await db.transactions.add({
-            id,
-            date: new Date(),
-            amount: finalAmount,
-            category: category.trim(),
-            note: "",
-            type,
-            account_id: 'ACC-001',
-            synced: 0,
-            is_shared: false,
-            is_installment: false
-          });
+          const account = await db.accounts.get(selectedAccountId);
 
-          if (account) {
-            await db.accounts.update('ACC-001', {
-              balance: account.balance + finalAmount
+          if (editData) {
+            if (editData.account_id !== selectedAccountId) {
+              const oldAccount = await db.accounts.get(editData.account_id);
+              if (oldAccount) {
+                  await db.accounts.update(editData.account_id, { balance: oldAccount.balance - editData.amount });
+              }
+              if (account) {
+                  await db.accounts.update(selectedAccountId, { balance: account.balance + finalAmount });
+              }
+            } else if (account) {
+              await db.accounts.update(selectedAccountId, {
+                balance: account.balance - editData.amount + finalAmount
+              });
+            }
+
+            await db.transactions.update(editData.id, {
+              amount: finalAmount,
+              category: category.trim(),
+              type: type as any,
+              account_id: selectedAccountId,
+              user_id: user.id, // Maintain user ownership
+              synced: 0 
             });
+          } else {
+            await db.transactions.add({
+              id: crypto.randomUUID(),
+              user_id: user.id, // Stamped with session user_id
+              date: new Date(),
+              amount: finalAmount,
+              category: category.trim(),
+              note: "",
+              type: type as any,
+              account_id: selectedAccountId,
+              synced: 0,
+              is_shared: false,
+              is_installment: false
+            });
+
+            if (account) {
+              await db.accounts.update(selectedAccountId, {
+                balance: account.balance + finalAmount
+              });
+            }
           }
         }
       });
 
-      showToast(editData ? "RECORD UPDATED" : `${type.toUpperCase()} RECORDED`, "success");
+      showToast(editData ? "RECORD UPDATED" : "RECORDED", "success");
       
       setTimeout(() => {
         onClose();
         syncTransactions();
+        syncAccounts();
       }, 500);
 
     } catch (e) { 
       showToast("Database Error", "error");
     }
   };
+
+  const selectedAccount = accounts?.find(a => a.id === selectedAccountId);
+  const targetAccount = accounts?.find(a => a.id === targetAccountId);
 
   return (
     <AnimatePresence>
@@ -163,12 +252,79 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                   type="button"
                   onClick={() => setType('income')} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
-                    type === 'income' ? 'bg-[#00d1ff] text-[#000000] shadow-lg' : 'text-white/40'
+                    type === 'income' ? 'bg-[#00E676] text-black shadow-lg' : 'text-white/40'
                   }`}
                 >
                   <ArrowUpRight size={14} /> Income
                 </button>
+                <button 
+                  type="button"
+                  onClick={() => setType('transfer')} 
+                  className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
+                    type === 'transfer' ? 'bg-white text-black shadow-lg' : 'text-white/40'
+                  }`}
+                >
+                  <ArrowLeftRight size={14} /> Transfer
+                </button>
               </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">
+                  {type === 'transfer' ? 'From Account' : 'Source Account'}
+                </label>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+                  {accounts?.map((acc) => {
+                    const IconComponent = ACCOUNT_ICONS.find(i => i.name === acc.icon_marker)?.icon || Wallet;
+                    const isActive = selectedAccountId === acc.id;
+                    const iconColor = acc.icon_color || '#00d1ff';
+                    return (
+                      <button
+                        key={acc.id}
+                        type="button"
+                        onClick={() => setSelectedAccountId(acc.id)}
+                        className={`flex items-center gap-2 px-4 py-3 rounded-xl border whitespace-nowrap transition-all ${
+                          isActive 
+                            ? 'bg-white/10 border-white text-white' 
+                            : 'bg-white/5 border-white/10 text-white/40'
+                        }`}
+                        style={isActive ? { borderColor: iconColor, color: iconColor } : {}}
+                      >
+                        <IconComponent size={14} style={{ color: isActive ? iconColor : 'inherit' }} />
+                        <span className="text-[10px] font-black uppercase">{acc.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {type === 'transfer' && (
+                <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="space-y-1">
+                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">To Account</label>
+                  <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+                    {accounts?.filter(a => a.id !== selectedAccountId).map((acc) => {
+                      const IconComponent = ACCOUNT_ICONS.find(i => i.name === acc.icon_marker)?.icon || Wallet;
+                      const isActive = targetAccountId === acc.id;
+                      const iconColor = acc.icon_color || '#00d1ff';
+                      return (
+                        <button
+                          key={acc.id}
+                          type="button"
+                          onClick={() => setTargetAccountId(acc.id)}
+                          className={`flex items-center gap-2 px-4 py-3 rounded-xl border whitespace-nowrap transition-all ${
+                            isActive 
+                              ? 'bg-white/10 border-white text-white' 
+                              : 'bg-white/5 border-white/10 text-white/40'
+                          }`}
+                          style={isActive ? { borderColor: iconColor, color: iconColor } : {}}
+                        >
+                          <IconComponent size={14} style={{ color: isActive ? iconColor : 'inherit' }} />
+                          <span className="text-[10px] font-black uppercase">{acc.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
 
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Amount</label>
@@ -178,35 +334,44 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                   value={displayAmount} 
                   onChange={handleAmountChange} 
                   placeholder="0.00" 
-                  autoFocus
                   className="w-full bg-transparent text-5xl font-black outline-none border-b border-white/10 pb-4 text-white tabular-nums placeholder:text-white/10" 
                 />
               </div>
 
-              <div className="space-y-3">
-                <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Quick Select</label>
-                <div className="flex flex-wrap gap-2">
-                  {suggestedCategories.map(cat => (
-                    <button 
-                      key={cat} 
-                      type="button" 
-                      onClick={() => setCategory(cat)}
-                      className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-all border ${
-                        category === cat ? 'bg-white text-black border-white shadow-lg' : 'bg-white/5 text-white/40 border-white/10'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
+              {type === 'transfer' && selectedAccount && targetAccount && (
+                <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-center" style={{ color: selectedAccount.icon_color || '#00d1ff' }}>
+                    {selectedAccount.name} <ArrowLeftRight size={10} className="inline mx-2" /> {targetAccount.name}
+                  </p>
                 </div>
-                <input 
-                  type="text" 
-                  value={category} 
-                  onChange={(e) => setCategory(e.target.value)} 
-                  placeholder="Enter Category" 
-                  className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl font-bold text-sm text-white focus:border-aura-accent focus:outline-none transition-colors" 
-                />
-              </div>
+              )}
+
+              {type !== 'transfer' && (
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Quick Select</label>
+                  <div className="flex flex-wrap gap-2">
+                    {suggestedCategories.map(cat => (
+                      <button 
+                        key={cat} 
+                        type="button" 
+                        onClick={() => setCategory(cat)}
+                        className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-all border ${
+                          category === cat ? 'bg-white text-black border-white shadow-lg' : 'bg-white/5 text-white/40 border-white/10'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                  <input 
+                    type="text" 
+                    value={category} 
+                    onChange={(e) => setCategory(e.target.value)} 
+                    placeholder="Enter Category" 
+                    className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl font-bold text-sm text-white focus:border-aura-accent focus:outline-none transition-colors" 
+                  />
+                </div>
+              )}
 
               <button 
                 onClick={handleSave} 
