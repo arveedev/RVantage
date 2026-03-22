@@ -133,6 +133,30 @@ export function useSync() {
             }
           }
         }
+
+        // --- Sync Transactions ---
+        if (result.data.transactions) {
+          for (const remoteTx of result.data.transactions) {
+            const localTx = await db.transactions.get(remoteTx.id);
+            
+            if (!localTx) {
+              await db.transactions.put({
+                id: remoteTx.id,
+                date: new Date(remoteTx.date),
+                amount: parseFloat(remoteTx.amount),
+                category: remoteTx.category,
+                account_id: remoteTx.account_id,
+                note: remoteTx.note || '',
+                type: remoteTx.type,
+                synced: 1,
+                user_id: user.id,
+                // Fixed: Providing boolean values to match Transaction interface
+                is_shared: String(remoteTx.is_shared).toUpperCase() === 'TRUE',
+                is_installment: String(remoteTx.is_installment).toUpperCase() === 'TRUE'
+              });
+            }
+          }
+        }
         
         lastSyncTime = Date.now();
         console.log("💎 Delta-Sync Complete: Data updated.");
@@ -159,7 +183,9 @@ export function useSync() {
       t.category, 
       t.account_id, 
       t.note || '', 
-      t.type
+      t.type,
+      t.is_shared ? "TRUE" : "FALSE",
+      t.is_installment ? "TRUE" : "FALSE"
     ]);
 
     try {

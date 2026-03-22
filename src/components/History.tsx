@@ -1,9 +1,18 @@
+import { useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db/schema';
 import { motion } from 'framer-motion';
 import { ArrowUpRight, ArrowDownLeft, Clock } from 'lucide-react';
+import { useSync } from '../hooks/useSync';
 
 export default function History() {
+  const { refreshFromCloud } = useSync();
+  
+  // Trigger a background cloud refresh when history is viewed
+  useEffect(() => {
+    refreshFromCloud();
+  }, []);
+
   const transactions = useLiveQuery(() => 
     db.transactions.orderBy('date').reverse().toArray()
   );

@@ -53,10 +53,12 @@ export class RVantageDB extends Dexie {
   constructor() {
     super('RVantageDB');
     
-    this.version(11).stores({
+    // Incremented version to 12 to trigger schema update
+    this.version(12).stores({
       users: 'id, &username, password', 
       session: 'id, user_id',
-      transactions: 'id, date, category, account_id, synced, type, is_installment, user_id',
+      // Added is_shared to the indexed fields for transactions
+      transactions: 'id, date, category, account_id, synced, type, is_shared, is_installment, user_id',
       accounts: 'id, name, balance, is_shared, include_in_glance, icon_marker, icon_color, user_id',
       settings: '[config_key+user_id], config_key, user_id'
     });

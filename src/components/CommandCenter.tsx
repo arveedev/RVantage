@@ -138,7 +138,6 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
       return;
     }
 
-    // Precise Change Detection against the ORIGINAL config props
     const currentDeductionsStr = JSON.stringify(localDeductions);
     const currentBillsStr = JSON.stringify(localBills);
     
@@ -173,7 +172,7 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
         fixed_bills_list: currentBillsStr,
         fixed_bills: String(totalFixedBills),
         net_income: String(netIncome),
-        payday_schedule: String(localSchedule).trim() // Force string clean
+        payday_schedule: String(localSchedule).trim()
       };
 
       const keys = Object.keys(updatedConfig);
@@ -183,12 +182,10 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
         user_id: user.id 
       }));
 
-      // Save to IndexedDB
       for (const item of settingsToSync) {
         await db.settings.put(item);
       }
 
-      // Sync to Cloud
       await syncSettings(settingsToSync);
       
       setConfig(updatedConfig);
@@ -281,23 +278,21 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
               
               <div className="space-y-3">
                 {localDeductions.map((d) => (
-                  <div key={d.id} className="flex gap-2 items-center bg-white/5 p-2 rounded-2xl border border-white/5">
+                  <div key={d.id} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center bg-white/5 p-2 rounded-2xl border border-white/5">
                     <input 
                       type="text" value={d.label}
                       onChange={(e) => updateDeduction(d.id, 'label', e.target.value)}
                       onFocus={(e) => { if (e.target.value === "New Deduction") updateDeduction(d.id, 'label', ''); }}
-                      className="flex-1 bg-transparent p-3 text-xs font-bold text-white outline-none"
+                      className="w-full bg-transparent p-3 text-xs font-bold text-white outline-none min-w-0"
                       placeholder="e.g. Tax"
                     />
-                    <div className="w-32 relative">
-                      <input 
-                        type="text" inputMode="decimal"
-                        value={formatNumber(d.amount)}
-                        onChange={(e) => updateDeduction(d.id, 'amount', cleanNumber(e.target.value))}
-                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-aura-accent outline-none pr-4"
-                        placeholder="0"
-                      />
-                    </div>
+                    <input 
+                      type="text" inputMode="decimal"
+                      value={formatNumber(d.amount)}
+                      onChange={(e) => updateDeduction(d.id, 'amount', cleanNumber(e.target.value))}
+                      className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-aura-accent outline-none pr-3"
+                      placeholder="0"
+                    />
                     <button onClick={() => removeDeduction(d.id)} className="p-3 text-red-500/50 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
                   </div>
                 ))}
@@ -349,23 +344,21 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
               
               <div className="space-y-3">
                 {localBills.map((b) => (
-                  <div key={b.id} className="flex gap-2 items-center bg-white/5 p-2 rounded-2xl border border-white/5">
+                  <div key={b.id} className="grid grid-cols-[1fr_120px_auto] gap-2 items-center bg-white/5 p-2 rounded-2xl border border-white/5">
                     <input 
                       type="text" value={b.label}
                       onChange={(e) => updateBill(b.id, 'label', e.target.value)}
                       onFocus={(e) => { if (e.target.value === "New Bill") updateBill(b.id, 'label', ''); }}
-                      className="flex-1 bg-transparent p-3 text-xs font-bold text-white outline-none"
+                      className="w-full bg-transparent p-3 text-xs font-bold text-white outline-none min-w-0"
                       placeholder="e.g. Rent"
                     />
-                    <div className="w-32 relative">
-                      <input 
-                        type="text" inputMode="decimal"
-                        value={formatNumber(b.amount)}
-                        onChange={(e) => updateBill(b.id, 'amount', cleanNumber(e.target.value))}
-                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-white outline-none pr-4"
-                        placeholder="0"
-                      />
-                    </div>
+                    <input 
+                      type="text" inputMode="decimal"
+                      value={formatNumber(b.amount)}
+                      onChange={(e) => updateBill(b.id, 'amount', cleanNumber(e.target.value))}
+                      className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-white outline-none pr-3"
+                      placeholder="0"
+                    />
                     <button onClick={() => removeBill(b.id)} className="p-3 text-red-500/50 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>
                   </div>
                 ))}
