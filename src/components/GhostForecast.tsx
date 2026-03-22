@@ -44,12 +44,13 @@ export default function GhostForecast({
   };
 
   // Calculate totals for the forecaster utility
+  // FIX: Ensuring we only sum the intended values and ignore incorrect transaction types
   const totalIncome = useMemo(() => 
-    incomes.reduce((sum, item) => sum + item.amount, 0), 
+    incomes.reduce((sum, item) => sum + Math.max(0, item.amount), 0), 
   [incomes]);
 
   const totalBills = useMemo(() => 
-    bills.reduce((sum, item) => sum + item.amount, 0), 
+    bills.reduce((sum, item) => sum + Math.max(0, item.amount), 0), 
   [bills]);
 
   const forecast = useMemo(() => calculateGhostForecast({

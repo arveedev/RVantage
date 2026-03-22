@@ -2,12 +2,12 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Check, Landmark, Calendar, Percent, 
-  Plus, Trash2, Calculator, RotateCcw 
+  Plus, Trash2, Calculator, RotateCcw, Loader2 
 } from 'lucide-react';
 import { db } from '../db/schema';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/useToast';
-import { useAuth } from './AuthContext'; // Now available
+import { useAuth } from '../hooks/useAuth';
 
 interface Deduction {
   id: string;
@@ -35,13 +35,17 @@ const CURRENCIES = [
 ];
 
 export default function CommandCenter({ isOpen, onClose, config, setConfig }: CommandCenterProps) {
-  const { user } = useAuth(); // Access current session
+  const { user } = useAuth();
   const { syncSettings } = useSync();
   const { showToast } = useToast();
   
   const [localDeductions, setLocalDeductions] = useState<Deduction[]>([]);
   const [localBills, setLocalBills] = useState<Bill[]>([]);
   const [grossIncome, setGrossIncome] = useState(config.monthly_income || "0");
+  const [localSchedule, setLocalSchedule] = useState(config.payday_schedule || "15, 30");
+  const [localCurrency, setLocalCurrency] = useState(config.base_currency || "PHP");
+  const [localInflation, setLocalInflation] = useState(config.inflation_rate || "0");
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (config.deductions) {
@@ -63,7 +67,10 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
     }
 
     setGrossIncome(config.monthly_income || "0");
-  }, [config.deductions, config.fixed_bills_list, config.monthly_income, isOpen]);
+    setLocalSchedule(config.payday_schedule || "15, 30");
+    setLocalCurrency(config.base_currency || "PHP");
+    setLocalInflation(config.inflation_rate || "0");
+  }, [config, isOpen]);
 
   const totalDeductions = localDeductions.reduce((sum, d) => sum + d.amount, 0);
   const totalFixedBills = localBills.reduce((sum, b) => sum + b.amount, 0);
@@ -104,15 +111,23 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
       setLocalDeductions([]);
       setLocalBills([]);
       setGrossIncome("0");
-      setConfig({
+      setLocalSchedule("15, 30");
+      setLocalCurrency("PHP");
+      setLocalInflation("0");
+      
+      const defaultConfig = {
         ...config,
         base_currency: 'PHP',
         inflation_rate: '0',
         payday_schedule: '15, 30',
         fixed_bills: '0',
         fixed_bills_list: '[]',
-        deductions: '[]'
-      });
+        deductions: '[]',
+        monthly_income: '0',
+        net_income: '0'
+      };
+      
+      setConfig(defaultConfig);
       showToast("SYSTEM RESET", "info");
     }
   };
@@ -123,35 +138,67 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
       return;
     }
 
+    // Precise Change Detection against the ORIGINAL config props
+    const currentDeductionsStr = JSON.stringify(localDeductions);
+    const currentBillsStr = JSON.stringify(localBills);
+    
+    const hasDeductionsChanged = currentDeductionsStr !== (config.deductions || '[]');
+    const hasBillsChanged = currentBillsStr !== (config.fixed_bills_list || '[]');
+    const hasIncomeChanged = String(grossIncome) !== String(config.monthly_income || "0");
+    const hasCurrencyChanged = localCurrency !== (config.base_currency || 'PHP');
+    const hasScheduleChanged = String(localSchedule) !== String(config.payday_schedule || '15, 30');
+    const hasInflationChanged = localInflation !== (config.inflation_rate || '0');
+    
+    if (
+      !hasDeductionsChanged && 
+      !hasBillsChanged && 
+      !hasIncomeChanged && 
+      !hasCurrencyChanged && 
+      !hasScheduleChanged &&
+      !hasInflationChanged
+    ) {
+      showToast("NO CHANGES MADE", "info");
+      onClose();
+      return;
+    }
+
+    setIsSaving(true);
     try {
       const updatedConfig = {
         ...config,
+        base_currency: localCurrency,
+        inflation_rate: localInflation,
         monthly_income: String(grossIncome),
-        deductions: JSON.stringify(localDeductions),
-        fixed_bills_list: JSON.stringify(localBills),
+        deductions: currentDeductionsStr,
+        fixed_bills_list: currentBillsStr,
         fixed_bills: String(totalFixedBills),
-        net_income: String(netIncome)
+        net_income: String(netIncome),
+        payday_schedule: String(localSchedule).trim() // Force string clean
       };
 
       const keys = Object.keys(updatedConfig);
       const settingsToSync = keys.map(key => ({ 
         config_key: key, 
         config_value: String(updatedConfig[key as keyof typeof updatedConfig]),
-        user_id: user.id // Ensure user_id is included for Dexie
+        user_id: user.id 
       }));
 
-      // Save to Local Database (IndexedDB) with user_id context
+      // Save to IndexedDB
       for (const item of settingsToSync) {
         await db.settings.put(item);
       }
 
+      // Sync to Cloud
       await syncSettings(settingsToSync);
+      
       setConfig(updatedConfig);
       showToast("SYSTEM RECONFIGURED", "success");
       onClose();
     } catch (e) {
       console.error("Save Error:", e);
       showToast("Save Failed", "error");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -163,9 +210,9 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
 
   const cleanNumber = (val: string) => val.replace(/,/g, '');
 
-  const currentCurrency = CURRENCIES.find(c => c.code === config.base_currency) || CURRENCIES[0];
+  const currentCurrency = CURRENCIES.find(c => c.code === localCurrency) || CURRENCIES[0];
 
-  const paydayDates = config.payday_schedule.split(',').map((s: string) => s.trim()).filter(Boolean);
+  const paydayDates = String(localSchedule || "15, 30").split(',').map((s: string) => s.trim()).filter(Boolean);
   const payCount = paydayDates.length || 1;
   const basePayPerPeriod = Math.floor(netIncome / payCount);
   const lastPayPeriod = netIncome - (basePayPerPeriod * (payCount - 1));
@@ -176,6 +223,7 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
         <motion.div 
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           className="fixed inset-0 z-[200] bg-black/90 backdrop-blur-xl flex flex-col"
+          data-command-center="true"
         >
           <div className="p-6 flex justify-between items-center bg-black/40 border-b border-white/5">
             <div>
@@ -193,8 +241,8 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-aura-subtle uppercase tracking-widest flex items-center gap-2"><Landmark size={12}/> Currency</label>
                 <select 
-                  value={config.base_currency} 
-                  onChange={e => setConfig({...config, base_currency: e.target.value})} 
+                  value={localCurrency} 
+                  onChange={e => setLocalCurrency(e.target.value)} 
                   className="w-full bg-white/5 border border-white/10 p-4 rounded-xl font-bold text-white outline-none"
                 >
                   {CURRENCIES.map(c => <option key={c.code} value={c.code} className="bg-[#111]">{c.label}</option>)}
@@ -203,8 +251,8 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-aura-subtle uppercase tracking-widest flex items-center gap-2"><Percent size={12}/> Inflation</label>
                 <input 
-                  type="number" value={config.inflation_rate} 
-                  onChange={e => setConfig({...config, inflation_rate: e.target.value})} 
+                  type="number" value={localInflation} 
+                  onChange={e => setLocalInflation(e.target.value)} 
                   className="w-full bg-white/5 border border-white/10 p-4 rounded-xl font-bold text-white outline-none"
                 />
               </div>
@@ -237,15 +285,16 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
                     <input 
                       type="text" value={d.label}
                       onChange={(e) => updateDeduction(d.id, 'label', e.target.value)}
+                      onFocus={(e) => { if (e.target.value === "New Deduction") updateDeduction(d.id, 'label', ''); }}
                       className="flex-1 bg-transparent p-3 text-xs font-bold text-white outline-none"
                       placeholder="e.g. Tax"
                     />
-                    <div className="w-24 relative">
+                    <div className="w-32 relative">
                       <input 
                         type="text" inputMode="decimal"
                         value={formatNumber(d.amount)}
                         onChange={(e) => updateDeduction(d.id, 'amount', cleanNumber(e.target.value))}
-                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-aura-accent outline-none"
+                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-aura-accent outline-none pr-4"
                         placeholder="0"
                       />
                     </div>
@@ -259,8 +308,8 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
               <div className="space-y-4">
                 <label className="text-[10px] font-black text-aura-subtle uppercase tracking-widest flex items-center gap-2"><Calendar size={12}/> Payday Schedule</label>
                 <input 
-                  type="text" value={config.payday_schedule} 
-                  onChange={e => setConfig({...config, payday_schedule: e.target.value})} 
+                  type="text" value={localSchedule} 
+                  onChange={e => setLocalSchedule(e.target.value)} 
                   className="w-full bg-black/40 border border-white/10 p-4 rounded-xl font-bold text-white outline-none" 
                   placeholder="15, 30" 
                 />
@@ -304,15 +353,16 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
                     <input 
                       type="text" value={b.label}
                       onChange={(e) => updateBill(b.id, 'label', e.target.value)}
+                      onFocus={(e) => { if (e.target.value === "New Bill") updateBill(b.id, 'label', ''); }}
                       className="flex-1 bg-transparent p-3 text-xs font-bold text-white outline-none"
                       placeholder="e.g. Rent"
                     />
-                    <div className="w-24 relative">
+                    <div className="w-32 relative">
                       <input 
                         type="text" inputMode="decimal"
                         value={formatNumber(b.amount)}
                         onChange={(e) => updateBill(b.id, 'amount', cleanNumber(e.target.value))}
-                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-white outline-none"
+                        className="w-full bg-black/40 p-3 rounded-xl text-xs font-black text-right text-white outline-none pr-4"
                         placeholder="0"
                       />
                     </div>
@@ -331,8 +381,20 @@ export default function CommandCenter({ isOpen, onClose, config, setConfig }: Co
           </div>
 
           <div className="p-6 bg-aura-black/80 backdrop-blur-xl border-t border-white/5">
-            <button onClick={handleSave} className="w-full bg-white text-black font-black p-6 rounded-[2rem] flex items-center justify-center gap-3 active:scale-95 transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)]">
-              <Check size={20} strokeWidth={3} /> COMMIT SYSTEM UPDATE
+            <button 
+              onClick={handleSave} 
+              disabled={isSaving}
+              className="w-full bg-white text-black font-black p-6 rounded-[2rem] flex items-center justify-center gap-3 active:scale-95 transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] disabled:opacity-50 disabled:scale-100"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 size={20} className="animate-spin" /> SYNCHRONIZING CORE...
+                </>
+              ) : (
+                <>
+                  <Check size={20} strokeWidth={3} /> COMMIT SYSTEM UPDATE
+                </>
+              )}
             </button>
           </div>
         </motion.div>

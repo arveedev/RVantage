@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Check, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Wallet, Landmark as BankIcon, PiggyBank, Briefcase, ShoppingBag } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/useToast';
-import { useAuth } from './AuthContext'; // Import session awareness
+import { useAuth } from '../hooks/useAuth'; // Updated import path
 
 interface Props { 
   isOpen: boolean; 
@@ -23,7 +23,7 @@ const ACCOUNT_ICONS = [
 ];
 
 export default function AddTransaction({ isOpen, onClose, editData }: Props) {
-  const { user } = useAuth(); // Get current user session
+  const { user } = useAuth(); 
   const { syncTransactions, syncAccounts } = useSync();
   const { showToast } = useToast();
   
@@ -43,6 +43,16 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   const transactions = useLiveQuery(
     () => db.transactions.where('user_id').equals(user?.id || '').toArray(),
     [user?.id]
+  );
+
+  const selectedAccount = useMemo(() => 
+    accounts?.find(a => a.id === selectedAccountId), 
+    [accounts, selectedAccountId]
+  );
+
+  const targetAccount = useMemo(() => 
+    accounts?.find(a => a.id === targetAccountId), 
+    [accounts, targetAccountId]
   );
 
   useEffect(() => {
@@ -79,8 +89,19 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/,/g, ''); 
     if (!isNaN(Number(value)) || value === "") {
-      setRawAmount(value);
-      const formatted = value === "" ? "" : Number(value).toLocaleString('en-US');
+      let numValue = value === "" ? 0 : Number(value);
+      
+      // Limit logic: If expense or transfer, cap at account balance
+      if ((type === 'expense' || type === 'transfer') && selectedAccount) {
+        const availableBalance = selectedAccount.balance;
+        if (numValue > availableBalance) {
+          numValue = availableBalance;
+        }
+      }
+
+      const finalRawValue = numValue === 0 && value === "" ? "" : numValue.toString();
+      setRawAmount(finalRawValue);
+      const formatted = finalRawValue === "" ? "" : Number(finalRawValue).toLocaleString('en-US');
       setDisplayAmount(formatted);
     }
   };
@@ -132,10 +153,10 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
             await db.transactions.add({
               id: crypto.randomUUID(),
-              user_id: user.id, // Stamped with session user_id
+              user_id: user.id,
               date: new Date(),
               amount: -numAmount, 
-              category: toAcc.name, 
+              category: 'Transfer', 
               note: `${fromAcc.name} → ${toAcc.name}`,
               type: 'transfer',
               account_id: selectedAccountId,
@@ -167,13 +188,13 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               category: category.trim(),
               type: type as any,
               account_id: selectedAccountId,
-              user_id: user.id, // Maintain user ownership
+              user_id: user.id,
               synced: 0 
             });
           } else {
             await db.transactions.add({
               id: crypto.randomUUID(),
-              user_id: user.id, // Stamped with session user_id
+              user_id: user.id,
               date: new Date(),
               amount: finalAmount,
               category: category.trim(),
@@ -207,9 +228,6 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     }
   };
 
-  const selectedAccount = accounts?.find(a => a.id === selectedAccountId);
-  const targetAccount = accounts?.find(a => a.id === targetAccountId);
-
   return (
     <AnimatePresence>
       {isOpen && (
@@ -241,7 +259,11 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               <div className="flex bg-black/40 p-1 rounded-2xl border border-white/5 relative z-10">
                 <button 
                   type="button"
-                  onClick={() => setType('expense')} 
+                  onClick={() => {
+                    setType('expense');
+                    setRawAmount("");
+                    setDisplayAmount("");
+                  }} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'expense' ? 'bg-red-500 text-white shadow-lg' : 'text-white/40'
                   }`}
@@ -250,7 +272,11 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 </button>
                 <button 
                   type="button"
-                  onClick={() => setType('income')} 
+                  onClick={() => {
+                    setType('income');
+                    setRawAmount("");
+                    setDisplayAmount("");
+                  }} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'income' ? 'bg-[#00E676] text-black shadow-lg' : 'text-white/40'
                   }`}
@@ -259,7 +285,11 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 </button>
                 <button 
                   type="button"
-                  onClick={() => setType('transfer')} 
+                  onClick={() => {
+                    setType('transfer');
+                    setRawAmount("");
+                    setDisplayAmount("");
+                  }} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'transfer' ? 'bg-white text-black shadow-lg' : 'text-white/40'
                   }`}
@@ -269,9 +299,16 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">
-                  {type === 'transfer' ? 'From Account' : 'Source Account'}
-                </label>
+                <div className="flex justify-between items-center px-1">
+                  <label className="text-[10px] font-black text-aura-subtle uppercase">
+                    {type === 'transfer' ? 'From Account' : 'Source Account'}
+                  </label>
+                  {selectedAccount && (
+                    <span className="text-[10px] font-bold text-white/40">
+                      BAL: {selectedAccount.balance.toLocaleString()}
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                   {accounts?.map((acc) => {
                     const IconComponent = ACCOUNT_ICONS.find(i => i.name === acc.icon_marker)?.icon || Wallet;
@@ -281,7 +318,11 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                       <button
                         key={acc.id}
                         type="button"
-                        onClick={() => setSelectedAccountId(acc.id)}
+                        onClick={() => {
+                          setSelectedAccountId(acc.id);
+                          setRawAmount("");
+                          setDisplayAmount("");
+                        }}
                         className={`flex items-center gap-2 px-4 py-3 rounded-xl border whitespace-nowrap transition-all ${
                           isActive 
                             ? 'bg-white/10 border-white text-white' 
@@ -290,7 +331,9 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                         style={isActive ? { borderColor: iconColor, color: iconColor } : {}}
                       >
                         <IconComponent size={14} style={{ color: isActive ? iconColor : 'inherit' }} />
-                        <span className="text-[10px] font-black uppercase">{acc.name}</span>
+                        <div className="flex flex-col items-start">
+                          <span className="text-[10px] font-black uppercase">{acc.name}</span>
+                        </div>
                       </button>
                     );
                   })}
@@ -299,7 +342,14 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
               {type === 'transfer' && (
                 <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="space-y-1">
-                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">To Account</label>
+                  <div className="flex justify-between items-center px-1">
+                    <label className="text-[10px] font-black text-aura-subtle uppercase">To Account</label>
+                    {targetAccount && (
+                      <span className="text-[10px] font-bold text-white/40">
+                        BAL: {targetAccount.balance.toLocaleString()}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
                     {accounts?.filter(a => a.id !== selectedAccountId).map((acc) => {
                       const IconComponent = ACCOUNT_ICONS.find(i => i.name === acc.icon_marker)?.icon || Wallet;

@@ -90,10 +90,12 @@ export default function SpendingAnalysis({
       if (!categoryTotals[t.category]) {
         categoryTotals[t.category] = { income: 0, expense: 0 };
       }
-      if (t.amount > 0) {
+      
+      // FIX: Explicitly check transaction type to prevent income being counted as outflow
+      if (t.type === 'income') {
         categoryTotals[t.category].income += t.amount;
         periodInflow += t.amount;
-      } else {
+      } else if (t.type === 'expense') {
         categoryTotals[t.category].expense += Math.abs(t.amount);
         periodOutflow += Math.abs(t.amount);
       }
@@ -297,11 +299,11 @@ export default function SpendingAnalysis({
       </div>
 
       <div className="bg-white/5 rounded-[2rem] border border-white/5 p-6 space-y-4">
-         <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center">
             <span className="text-[10px] font-black text-aura-subtle uppercase tracking-widest">Efficiency Nodes</span>
             <TrendingUp size={14} className="text-aura-accent" />
-         </div>
-         <div className="space-y-3">
+          </div>
+          <div className="space-y-3">
             <div className="flex justify-between items-center">
                <span className="text-xs font-bold text-white/60 uppercase tracking-tighter flex items-center gap-2">
                   <TrendingDown size={12} className="text-red-500" /> Lowest Spend
@@ -326,7 +328,7 @@ export default function SpendingAnalysis({
                 <p className="text-[8px] font-black text-aura-subtle uppercase tracking-tighter">{analysis.lowestIncome.name}</p>
                </div>
             </div>
-         </div>
+          </div>
       </div>
 
       <div className={`bg-white/5 border ${analysis.insight.color} p-5 rounded-[2rem] flex items-start gap-4 transition-colors duration-500`}>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useMemo } from 'react';
 import { db } from '../db/schema';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -12,40 +12,34 @@ interface AuthContextType {
   loading: boolean;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+// Internal context object
+const InternalAuthContext = createContext<AuthContextType | undefined>(undefined);
+
+// Export the Context object specifically for the useAuth hook to consume
+export const AuthContext = InternalAuthContext;
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  // We sync directly with the session table
   const session = useLiveQuery(() => db.session.get('current'));
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  
+  // We fetch the user details based on the session user_id
+  const userData = useLiveQuery(
+    async () => {
+      if (!session?.user_id) return null;
+      return await db.users.get(session.user_id);
+    },
+    [session?.user_id]
+  );
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      if (session?.user_id) {
-        const userData = await db.users.get(session.user_id);
-        if (userData) {
-          setUser({ id: userData.id, username: userData.username });
-        }
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    };
-
-    fetchUser();
-  }, [session]);
+  // The context is "loading" only while Dexie is still resolving the initial query
+  const contextValue = useMemo(() => ({
+    user: userData ? { id: userData.id, username: userData.username } : null,
+    loading: session === undefined || (!!session?.user_id && userData === undefined)
+  }), [session, userData]);
 
   return (
-    <AuthContext.Provider value={{ user, loading }}>
+    <InternalAuthContext.Provider value={contextValue}>
       {children}
-    </AuthContext.Provider>
+    </InternalAuthContext.Provider>
   );
 }
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
