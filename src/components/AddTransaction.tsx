@@ -3,10 +3,10 @@ import { db } from '../db/schema';
 import type { Transaction } from '../db/schema'; 
 import { useLiveQuery } from 'dexie-react-hooks';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Wallet, Landmark as BankIcon, PiggyBank, Briefcase, ShoppingBag } from 'lucide-react';
+import { X, Check, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Wallet, Landmark as BankIcon, PiggyBank, Briefcase, ShoppingBag, Calendar } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/useToast';
-import { useAuth } from '../hooks/useAuth'; // Updated import path
+import { useAuth } from '../hooks/useAuth';
 
 interface Props { 
   isOpen: boolean; 
@@ -28,13 +28,13 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   const { showToast } = useToast();
   
   const [displayAmount, setDisplayAmount] = useState(""); 
-  const [rawAmount, setRawAmount] = useState("");          
+  const [rawAmount, setRawAmount] = useState("");            
   const [category, setCategory] = useState("");
   const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [targetAccountId, setTargetAccountId] = useState<string>("");
+  const [transactionDate, setTransactionDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
-  // Filter queries by user_id
   const accounts = useLiveQuery(
     () => db.accounts.where('user_id').equals(user?.id || '').toArray(),
     [user?.id]
@@ -59,8 +59,9 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     if (editData && isOpen) {
       const absAmount = Math.abs(editData.amount);
       setRawAmount(absAmount.toString());
-      setDisplayAmount(absAmount.toLocaleString('en-US'));
+      setDisplayAmount(absAmount.toString()); 
       setCategory(editData.category);
+      setTransactionDate(new Date(editData.date).toISOString().split('T')[0]);
       if (editData.category === 'Transfer' || editData.type === 'transfer') {
         setType('transfer');
       } else {
@@ -72,6 +73,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
       setRawAmount(""); 
       setCategory(""); 
       setType('expense');
+      setTransactionDate(new Date().toISOString().split('T')[0]);
       if (accounts && accounts.length > 0) {
         setSelectedAccountId(accounts[0].id);
         if (accounts.length > 1) setTargetAccountId(accounts[1].id);
@@ -80,29 +82,29 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   }, [editData, isOpen, accounts]);
   
   const suggestedCategories = useMemo(() => {
-    const defaults = ['Food', 'Salary', 'Transport', 'Bills', 'Gym'];
-    if (!transactions) return defaults;
-    const unique = Array.from(new Set(transactions.map(t => t.category)));
-    return Array.from(new Set([...unique, ...defaults])).slice(0, 5);
-  }, [transactions]);
+    const defaultExpense = ['Food', 'Transport', 'Bills', 'Gym', 'Groceries', 'Health', 'Subscription', 'Entertainment'];
+    const defaultIncome = ['Salary', 'Freelance', 'Investment', 'Gift', 'Business', 'Refund'];
+    
+    if (!transactions) return type === 'income' ? defaultIncome : defaultExpense;
+
+    const counts: Record<string, number> = {};
+    transactions
+      .filter(t => t.type === type && t.category !== 'Transfer')
+      .forEach(t => {
+        counts[t.category] = (counts[t.category] || 0) + 1;
+      });
+
+    const userCategories = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+    const defaults = type === 'income' ? defaultIncome : defaultExpense;
+    
+    return Array.from(new Set([...userCategories, ...defaults])).slice(0, 12);
+  }, [transactions, type]);
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/,/g, ''); 
-    if (!isNaN(Number(value)) || value === "") {
-      let numValue = value === "" ? 0 : Number(value);
-      
-      // Limit logic: If expense or transfer, cap at account balance
-      if ((type === 'expense' || type === 'transfer') && selectedAccount) {
-        const availableBalance = selectedAccount.balance;
-        if (numValue > availableBalance) {
-          numValue = availableBalance;
-        }
-      }
-
-      const finalRawValue = numValue === 0 && value === "" ? "" : numValue.toString();
-      setRawAmount(finalRawValue);
-      const formatted = finalRawValue === "" ? "" : Number(finalRawValue).toLocaleString('en-US');
-      setDisplayAmount(formatted);
+    const val = e.target.value.replace(/,/g, '');
+    if (/^\d*\.?\d*$/.test(val)) {
+      setRawAmount(val);
+      setDisplayAmount(val);
     }
   };
 
@@ -113,7 +115,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     }
 
     const numAmount = parseFloat(rawAmount);
-    if (!numAmount || numAmount <= 0) {
+    if (isNaN(numAmount) || numAmount <= 0) {
       showToast("Enter valid amount", "error");
       return;
     }
@@ -140,6 +142,11 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     }
     
     const finalAmount = type === 'expense' ? -Math.abs(numAmount) : Math.abs(numAmount);
+    const finalDate = new Date(transactionDate);
+    const now = new Date();
+    if (finalDate.toDateString() === now.toDateString()) {
+      finalDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+    }
 
     try {
       await db.transaction('rw', [db.transactions, db.accounts], async () => {
@@ -154,7 +161,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             await db.transactions.add({
               id: crypto.randomUUID(),
               user_id: user.id,
-              date: new Date(),
+              date: finalDate,
               amount: -numAmount, 
               category: 'Transfer', 
               note: `${fromAcc.name} → ${toAcc.name}`,
@@ -189,13 +196,14 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               type: type as any,
               account_id: selectedAccountId,
               user_id: user.id,
+              date: finalDate,
               synced: 0 
             });
           } else {
             await db.transactions.add({
               id: crypto.randomUUID(),
               user_id: user.id,
-              date: new Date(),
+              date: finalDate,
               amount: finalAmount,
               category: category.trim(),
               note: "",
@@ -228,6 +236,13 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     }
   };
 
+  const formatWithCommas = (val: string) => {
+    if (!val) return "";
+    const parts = val.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join('.');
+  };
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -244,13 +259,17 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             initial={{ y: "100%" }} 
             animate={{ y: 0 }} 
             exit={{ y: "100%" }} 
-            className="relative w-full max-w-md bg-aura-card border border-white/10 rounded-[2.5rem] p-8 pb-12 shadow-2xl overflow-hidden"
+            className="relative w-full max-w-md bg-aura-card border border-white/10 rounded-[2.5rem] p-6 sm:p-8 pb-10 shadow-2xl overflow-y-auto max-h-[90vh] no-scrollbar"
           >
-            <div className="flex justify-between items-center mb-6 text-white">
+            <div className="flex justify-between items-center mb-6 text-white sticky top-0 bg-aura-card z-20 pb-2">
               <h2 className="text-xl font-black uppercase tracking-widest leading-none">
                 {editData ? 'Edit Entry' : 'New Entry'}
               </h2>
-              <button onClick={onClose} className="p-2 bg-white/5 rounded-full">
+              <button 
+                onClick={onClose} 
+                className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors"
+                aria-label="Close"
+              >
                 <X size={20}/>
               </button>
             </div>
@@ -259,11 +278,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               <div className="flex bg-black/40 p-1 rounded-2xl border border-white/5 relative z-10">
                 <button 
                   type="button"
-                  onClick={() => {
-                    setType('expense');
-                    setRawAmount("");
-                    setDisplayAmount("");
-                  }} 
+                  onClick={() => { setType('expense'); setCategory(""); }} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'expense' ? 'bg-red-500 text-white shadow-lg' : 'text-white/40'
                   }`}
@@ -272,11 +287,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 </button>
                 <button 
                   type="button"
-                  onClick={() => {
-                    setType('income');
-                    setRawAmount("");
-                    setDisplayAmount("");
-                  }} 
+                  onClick={() => { setType('income'); setCategory(""); }} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'income' ? 'bg-[#00E676] text-black shadow-lg' : 'text-white/40'
                   }`}
@@ -285,17 +296,44 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 </button>
                 <button 
                   type="button"
-                  onClick={() => {
-                    setType('transfer');
-                    setRawAmount("");
-                    setDisplayAmount("");
-                  }} 
+                  onClick={() => setType('transfer')} 
                   className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-[10px] font-black uppercase transition-all duration-200 ${
                     type === 'transfer' ? 'bg-white text-black shadow-lg' : 'text-white/40'
                   }`}
                 >
                   <ArrowLeftRight size={14} /> Transfer
                 </button>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-1">
+                   <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Transaction Date</label>
+                   <div className="relative group">
+                      <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-aura-accent">
+                        <Calendar size={18} />
+                      </div>
+                      <input 
+                        type="date" 
+                        value={transactionDate}
+                        onChange={(e) => setTransactionDate(e.target.value)}
+                        onClick={(e) => (e.target as any).showPicker?.()}
+                        className="w-full bg-white/5 border border-white/10 pl-12 p-4 rounded-2xl font-bold text-sm text-white focus:border-aura-accent focus:outline-none transition-colors block appearance-none color-scheme-dark"
+                        style={{ colorScheme: 'dark' }}
+                      />
+                   </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Amount</label>
+                  <input 
+                    type="text" 
+                    inputMode="decimal" 
+                    value={formatWithCommas(displayAmount)} 
+                    onChange={handleAmountChange} 
+                    placeholder="0.00" 
+                    className="w-full bg-transparent text-4xl font-black outline-none border-b border-white/10 pb-2 text-white tabular-nums placeholder:text-white/10" 
+                  />
+                </div>
               </div>
 
               <div className="space-y-1">
@@ -318,11 +356,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                       <button
                         key={acc.id}
                         type="button"
-                        onClick={() => {
-                          setSelectedAccountId(acc.id);
-                          setRawAmount("");
-                          setDisplayAmount("");
-                        }}
+                        onClick={() => setSelectedAccountId(acc.id)}
                         className={`flex items-center gap-2 px-4 py-3 rounded-xl border whitespace-nowrap transition-all ${
                           isActive 
                             ? 'bg-white/10 border-white text-white' 
@@ -331,9 +365,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                         style={isActive ? { borderColor: iconColor, color: iconColor } : {}}
                       >
                         <IconComponent size={14} style={{ color: isActive ? iconColor : 'inherit' }} />
-                        <div className="flex flex-col items-start">
-                          <span className="text-[10px] font-black uppercase">{acc.name}</span>
-                        </div>
+                        <span className="text-[10px] font-black uppercase">{acc.name}</span>
                       </button>
                     );
                   })}
@@ -376,30 +408,10 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 </motion.div>
               )}
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Amount</label>
-                <input 
-                  type="text" 
-                  inputMode="decimal" 
-                  value={displayAmount} 
-                  onChange={handleAmountChange} 
-                  placeholder="0.00" 
-                  className="w-full bg-transparent text-5xl font-black outline-none border-b border-white/10 pb-4 text-white tabular-nums placeholder:text-white/10" 
-                />
-              </div>
-
-              {type === 'transfer' && selectedAccount && targetAccount && (
-                <div className="p-4 bg-white/5 rounded-2xl border border-white/10">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-center" style={{ color: selectedAccount.icon_color || '#00d1ff' }}>
-                    {selectedAccount.name} <ArrowLeftRight size={10} className="inline mx-2" /> {targetAccount.name}
-                  </p>
-                </div>
-              )}
-
               {type !== 'transfer' && (
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Quick Select</label>
-                  <div className="flex flex-wrap gap-2">
+                  <label className="text-[10px] font-black text-aura-subtle uppercase ml-1">Quick Select Category</label>
+                  <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto no-scrollbar p-1">
                     {suggestedCategories.map(cat => (
                       <button 
                         key={cat} 
@@ -425,7 +437,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
               <button 
                 onClick={handleSave} 
-                className="w-full bg-white text-black py-5 rounded-[2rem] font-black uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-transform shadow-xl hover:bg-[#00d1ff]"
+                className="w-full bg-white text-black py-5 rounded-[2rem] font-black uppercase tracking-widest flex items-center justify-center gap-3 active:scale-95 transition-transform shadow-xl hover:bg-aura-accent"
               >
                 <Check size={20} strokeWidth={3}/> {editData ? 'Update Record' : 'Confirm Entry'}
               </button>

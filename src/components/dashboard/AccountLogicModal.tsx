@@ -1,9 +1,31 @@
 import { motion } from 'framer-motion';
-import { X, Info, CreditCard, Palette, Users, User, Eye, EyeOff, Loader2, Check } from 'lucide-react';
+import { X, Info, CreditCard, Palette, Users, User, Eye, EyeOff, Loader2, Check, Trash2, Wallet, Landmark, PiggyBank, Coins, Receipt, CreditCard as CardIcon, Briefcase, Home, Car, ShoppingBag, Gift, Heart } from 'lucide-react';
 import { db } from '../../db/schema';
 import { useToast } from '../../context/useToast';
+import { useState, useEffect } from 'react';
 
-const PRESET_COLORS = ['#00d1ff', '#00E676', '#FF3D00', '#FFD600', '#AF52DE', '#FF2D55', '#FFFFFF'];
+// Expanded color palette
+const PRESET_COLORS = [
+  '#00d1ff', '#00E676', '#FF3D00', '#FFD600', '#AF52DE', 
+  '#FF2D55', '#795548', '#607D8B', '#E91E63', '#9C27B0', 
+  '#3F51B5', '#009688', '#FFFFFF'
+];
+
+// Expanded icon list for more variety
+const EXTENDED_ICONS = [
+  { name: 'Wallet', icon: Wallet },
+  { name: 'Landmark', icon: Landmark },
+  { name: 'PiggyBank', icon: PiggyBank },
+  { name: 'Coins', icon: Coins },
+  { name: 'Receipt', icon: Receipt },
+  { name: 'Card', icon: CardIcon },
+  { name: 'Briefcase', icon: Briefcase },
+  { name: 'Home', icon: Home },
+  { name: 'Car', icon: Car },
+  { name: 'ShoppingBag', icon: ShoppingBag },
+  { name: 'Gift', icon: Gift },
+  { name: 'Heart', icon: Heart },
+];
 
 interface AccountLogicModalProps {
   isOpen: boolean;
@@ -18,12 +40,43 @@ interface AccountLogicModalProps {
   accountIcons: { name: string; icon: any }[];
 }
 
-export default function AccountLogicModal({ isOpen, onClose, editingAccount, setEditingAccount, isProcessingAccount, setIsProcessingAccount, userId, syncAccounts, config, accountIcons }: AccountLogicModalProps) {
+export default function AccountLogicModal({ 
+  isOpen, 
+  onClose, 
+  editingAccount, 
+  setEditingAccount, 
+  isProcessingAccount, 
+  setIsProcessingAccount, 
+  userId, 
+  syncAccounts, 
+  config 
+}: AccountLogicModalProps) {
   const { showToast } = useToast();
+  const [displayValue, setDisplayValue] = useState('');
 
-  const formatNumber = (val: any) => {
-    if (!val && val !== 0) return '';
-    return String(val).replace(/,/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  useEffect(() => {
+    if (isOpen && editingAccount) {
+      setDisplayValue(editingAccount.balance?.toString() || '');
+    }
+  }, [isOpen, editingAccount?.id]);
+
+  const formatNumberForDisplay = (val: string) => {
+    if (!val) return '';
+    const parts = val.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    return parts.join('.');
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawValue = e.target.value.replace(/,/g, '');
+    if (/^\d*\.?\d*$/.test(rawValue)) {
+      setDisplayValue(rawValue);
+      const parsed = parseFloat(rawValue);
+      setEditingAccount({
+        ...editingAccount, 
+        balance: isNaN(parsed) ? 0 : parsed
+      });
+    }
   };
 
   const handleSaveAccount = async () => {
@@ -33,7 +86,7 @@ export default function AccountLogicModal({ isOpen, onClose, editingAccount, set
       await db.accounts.put({
         id: editingAccount.id || crypto.randomUUID(),
         name: editingAccount.name,
-        balance: editingAccount.balance || 0,
+        balance: parseFloat(displayValue) || 0,
         is_shared: editingAccount.is_shared || false,
         include_in_glance: editingAccount.include_in_glance ?? true,
         icon_marker: editingAccount.icon_marker || 'Wallet',
@@ -50,6 +103,23 @@ export default function AccountLogicModal({ isOpen, onClose, editingAccount, set
     }
   };
 
+  const handleDeleteAccount = async () => {
+    if (!editingAccount?.id) return;
+    if (!confirm("Are you sure? This will permanently delete this account and its history.")) return;
+    
+    setIsProcessingAccount(true);
+    try {
+      await db.accounts.delete(editingAccount.id);
+      await syncAccounts();
+      showToast("ACCOUNT DELETED", "success");
+      onClose();
+    } catch (e) {
+      showToast("Delete Failed", "error");
+    } finally {
+      setIsProcessingAccount(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -58,7 +128,7 @@ export default function AccountLogicModal({ isOpen, onClose, editingAccount, set
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-2xl font-black italic tracking-tighter uppercase text-white">Account Logic</h2>
-            <p className="text-[10px] text-aura-subtle font-bold tracking-widest uppercase">Configuration Node</p>
+            <p className="text-[10px] text-aura-subtle font-bold tracking-widest uppercase">By ArVee</p>
           </div>
           <button onClick={onClose} className="p-3 bg-white/5 rounded-full text-white/40 active:scale-90"><X size={20}/></button>
         </div>
@@ -72,22 +142,32 @@ export default function AccountLogicModal({ isOpen, onClose, editingAccount, set
             <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest flex items-center gap-2 text-white/60"><CreditCard size={10} /> Liquid Assets</label>
             <div className="relative">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-aura-accent font-black text-xl">{config.base_currency}</span>
-              <input type="text" value={formatNumber(editingAccount?.balance)} onChange={e => setEditingAccount({...editingAccount, balance: Number(e.target.value.replace(/,/g, ''))})} className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-16 font-black text-4xl outline-none focus:border-aura-accent text-white tabular-nums" />
+              <input 
+                type="text" 
+                inputMode="decimal"
+                value={formatNumberForDisplay(displayValue)} 
+                onChange={handleInputChange} 
+                className="w-full bg-white/5 border border-white/10 rounded-2xl p-5 pl-16 font-black text-4xl outline-none focus:border-aura-accent text-white tabular-nums" 
+              />
             </div>
           </div>
 
           <div className="space-y-3">
             <label className="text-[9px] font-black opacity-40 uppercase ml-1 tracking-widest text-white/60 flex items-center gap-2"><Palette size={10} /> Visual Marker</label>
-            <div className="flex justify-between gap-2">
-              {accountIcons.map(item => (
-                <button key={item.name} onClick={() => setEditingAccount({...editingAccount, icon_marker: item.name})} className={`flex-1 aspect-square rounded-2xl border flex items-center justify-center transition-all ${editingAccount?.icon_marker === item.name ? 'bg-white text-black border-white scale-110' : 'bg-white/5 border-white/10 text-white/40'}`}>
-                  <item.icon size={20} />
+            
+            {/* Expanded Icon Grid */}
+            <div className="grid grid-cols-4 gap-2">
+              {EXTENDED_ICONS.map(item => (
+                <button key={item.name} onClick={() => setEditingAccount({...editingAccount, icon_marker: item.name})} className={`aspect-square rounded-2xl border flex items-center justify-center transition-all ${editingAccount?.icon_marker === item.name ? 'bg-white text-black border-white scale-105' : 'bg-white/5 border-white/10 text-white/40'}`}>
+                  <item.icon size={18} />
                 </button>
               ))}
             </div>
-            <div className="flex flex-wrap gap-2 mt-2">
+
+            {/* Expanded Color Palette */}
+            <div className="flex flex-wrap gap-2 mt-4 justify-center">
               {PRESET_COLORS.map(color => (
-                <button key={color} onClick={() => setEditingAccount({...editingAccount, icon_color: color})} className={`w-8 h-8 rounded-full border-2 transition-all ${editingAccount?.icon_color === color ? 'border-white scale-125' : 'border-transparent'}`} style={{ backgroundColor: color }} />
+                <button key={color} onClick={() => setEditingAccount({...editingAccount, icon_color: color})} className={`w-7 h-7 rounded-full border-2 transition-all ${editingAccount?.icon_color === color ? 'border-white scale-125' : 'border-transparent'}`} style={{ backgroundColor: color }} />
               ))}
             </div>
           </div>
@@ -109,6 +189,13 @@ export default function AccountLogicModal({ isOpen, onClose, editingAccount, set
             {isProcessingAccount ? <Loader2 className="animate-spin" size={20} /> : <Check size={20} strokeWidth={3} />} 
             {editingAccount?.id ? "UPDATE DEPLOYMENT" : "INITIALIZE ACCOUNT"}
           </button>
+
+          {/* New Delete Button */}
+          {editingAccount?.id && (
+            <button disabled={isProcessingAccount} onClick={handleDeleteAccount} className="w-full bg-red-500/10 text-red-500 border border-red-500/20 font-black p-4 rounded-[1.5rem] flex items-center justify-center gap-2 active:scale-95 transition-all text-[10px] uppercase tracking-widest mt-2">
+              <Trash2 size={14} /> Destroy Account
+            </button>
+          )}
         </div>
       </motion.div>
     </motion.div>

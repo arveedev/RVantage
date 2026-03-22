@@ -3,7 +3,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/schema';
 import type { Transaction, Account } from '../../db/schema'; 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, Zap, LogOut, Plus, Wallet, TrendingUp, PiggyBank, Landmark as BankIcon, Briefcase, ShoppingBag } from 'lucide-react';
+import { 
+  Settings, Zap, LogOut, Plus, Wallet, TrendingUp, PiggyBank, 
+  Landmark as BankIcon, Briefcase, ShoppingBag, Coins, Receipt, 
+  CreditCard as CardIcon, Home, Car, Gift, Heart 
+} from 'lucide-react';
 import { useSync } from '../../hooks/useSync';
 import { useToast } from '../../context/useToast';
 
@@ -23,17 +27,24 @@ export default function Dashboard() {
   const session = useLiveQuery(() => db.session.get('current'));
   const userId = session?.user_id;
 
-  // Move Icons inside the component to prevent Vite HMR export errors
+  // Expanded Icons to match the AccountLogicModal EXTENDED_ICONS
   const ACCOUNT_ICONS = [
     { name: 'Wallet', icon: Wallet },
-    { name: 'Bank', icon: BankIcon },
-    { name: 'Savings', icon: PiggyBank },
-    { name: 'Work', icon: Briefcase },
-    { name: 'Shopping', icon: ShoppingBag }
+    { name: 'Landmark', icon: BankIcon },
+    { name: 'PiggyBank', icon: PiggyBank },
+    { name: 'Coins', icon: Coins },
+    { name: 'Receipt', icon: Receipt },
+    { name: 'Card', icon: CardIcon },
+    { name: 'Briefcase', icon: Briefcase },
+    { name: 'Home', icon: Home },
+    { name: 'Car', icon: Car },
+    { name: 'ShoppingBag', icon: ShoppingBag },
+    { name: 'Gift', icon: Gift },
+    { name: 'Heart', icon: Heart },
   ];
 
   const [activeTab, setActiveTab] = useState<'home' | 'simulator'>('home');
-  const [timeFilter, setTimeFilter] = useState<'day' | 'week' | 'month' | 'all'>('all');
+  const [timeFilter, setTimeFilter] = useState<'day' | 'week' | 'month' | 'year' | 'all'>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showAccounts, setShowAccounts] = useState(false);
@@ -100,26 +111,51 @@ export default function Dashboard() {
 
   const financialIntel = useMemo(() => {
     if (!accounts || !transactions) return { total: 0, safe: 0, daysToInflow: 0, variableSpendAverage: 0 };
+    
     const totalBalance = accounts.reduce((acc, curr) => curr.include_in_glance ? acc + curr.balance : acc, 0);
+    
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const variableSpendAverage = transactions
-      .filter(t => new Date(t.date) >= thirtyDaysAgo && t.amount < 0 && !t.is_installment)
-      .reduce((acc, t) => acc + Math.abs(t.amount), 0) / 30;
-    const upcoming = transactions.filter(t => new Date(t.date) > new Date() && t.amount < 0).reduce((acc, t) => acc + Math.abs(t.amount), 0);
-    const scheduleStr = String(config.payday_schedule || '15,30');
+    
+    const varSpentLastMonth = transactions
+      .filter(t => new Date(t.date) >= thirtyDaysAgo && t.type === 'expense' && !t.is_installment)
+      .reduce((acc, t) => acc + Math.abs(t.amount), 0);
+    const variableSpendAverage = varSpentLastMonth / 30;
+
+    const scheduleStr = String(config.payday_schedule || '15, 30');
     const paydays = scheduleStr.split(',').map(n => parseInt(n.trim())).filter(n => !isNaN(n)).sort((a, b) => a - b);
     const now = new Date();
     const todayDate = now.getDate();
     const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    
     let daysToInflow = 0;
     const nextPayday = paydays.find(d => d > todayDate);
-    if (nextPayday) { daysToInflow = nextPayday - todayDate; } 
-    else if (paydays.length > 0) { daysToInflow = (lastDayOfMonth - todayDate) + paydays[0]; }
-    return { total: totalBalance, safe: totalBalance - upcoming, daysToInflow: isNaN(daysToInflow) ? 0 : daysToInflow, variableSpendAverage };
+    if (nextPayday) { 
+      daysToInflow = nextPayday - todayDate; 
+    } else if (paydays.length > 0) { 
+      daysToInflow = (lastDayOfMonth - todayDate) + paydays[0]; 
+    }
+
+    const monthlyBills = parseFloat(config.fixed_bills) || 0;
+    const paydayCount = paydays.length || 1; 
+    const billsPerPayCycle = monthlyBills / paydayCount;
+
+    const upcomingManual = transactions
+      .filter(t => new Date(t.date) > new Date() && t.type === 'expense')
+      .reduce((acc, t) => acc + Math.abs(t.amount), 0);
+
+    const billsBuffer = todayDate > 20 ? monthlyBills * 0.2 : billsPerPayCycle; 
+    const burnBuffer = variableSpendAverage * daysToInflow;
+    const safeToSpend = totalBalance - billsBuffer - burnBuffer - upcomingManual;
+
+    return { 
+      total: totalBalance, 
+      safe: Math.max(0, safeToSpend), 
+      daysToInflow: isNaN(daysToInflow) ? 0 : daysToInflow, 
+      variableSpendAverage 
+    };
   }, [accounts, transactions, config]);
 
-  // Added guard to prevent rendering or booting while session is loading
   if (session === undefined || (session && !userId)) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -137,7 +173,7 @@ export default function Dashboard() {
           </div>
           <div>
             <span className="font-black tracking-tighter uppercase text-sm block leading-none text-white">RVantage</span>
-            <span className="text-[8px] font-bold text-aura-accent uppercase tracking-[0.2em]">Command v3.0</span>
+            <span className="text-[8px] font-bold text-aura-accent uppercase tracking-[0.2em]">By ArVee</span>
           </div>
         </div>
         <div className="flex gap-2 items-center">
@@ -177,13 +213,14 @@ export default function Dashboard() {
               />
             </motion.div>
           ) : (
-            <Simulator 
-              key="simulator-tab"
-              config={config}
-              financialIntel={financialIntel}
-              transactions={transactions}
-              baseCurrency={config.base_currency}
-            />
+            <motion.div key="simulator-tab" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }}>
+              <Simulator 
+                config={config}
+                financialIntel={financialIntel}
+                transactions={transactions}
+                baseCurrency={config.base_currency}
+              />
+            </motion.div>
           )}
         </AnimatePresence>
       </main>

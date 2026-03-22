@@ -3,7 +3,8 @@ import { calculateGhostForecast } from '../utils/forecaster';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChevronDown, AlertCircle, CheckCircle2, ReceiptText, 
-  ArrowDownRight, ArrowUpRight, Plus, Minus, TrendingUp
+  ArrowDownRight, ArrowUpRight, Plus, Minus, TrendingUp, Sparkles,
+  Shirt, CalendarDays
 } from 'lucide-react';
 
 interface FinanceEntity {
@@ -43,8 +44,6 @@ export default function GhostForecast({
     setDisplayPrice(raw ? num.toLocaleString() : "");
   };
 
-  // Calculate totals for the forecaster utility
-  // FIX: Ensuring we only sum the intended values and ignore incorrect transaction types
   const totalIncome = useMemo(() => 
     incomes.reduce((sum, item) => sum + Math.max(0, item.amount), 0), 
   [incomes]);
@@ -53,6 +52,8 @@ export default function GhostForecast({
     bills.reduce((sum, item) => sum + Math.max(0, item.amount), 0), 
   [bills]);
 
+  // The Ghost Forecast now uses the variableSpendAvg (Habit Spend) 
+  // to simulate realistic monthly depletion.
   const forecast = useMemo(() => calculateGhostForecast({
     currentBalance: currentBalance,
     monthlyIncome: totalIncome, 
@@ -65,7 +66,11 @@ export default function GhostForecast({
     inflation
   }), [currentBalance, totalIncome, totalBills, variableSpendAvg, purchasePrice, interest, term, isCash, inflation]);
 
-  const displayForecast = forecast;
+  // Ensure the display forecast matches the selected term length or a minimum lookahead
+  const displayForecast = useMemo(() => {
+    const monthsToDisplay = isCash ? 12 : Math.max(term, 12);
+    return forecast.slice(0, monthsToDisplay);
+  }, [forecast, term, isCash]);
 
   const maxBal = Math.max(...displayForecast.map(d => d.balance));
   const minBal = Math.min(...displayForecast.map(d => d.balance));
@@ -74,6 +79,24 @@ export default function GhostForecast({
   const chartPoints = displayForecast.map((d, i) => 
     `${(i / (displayForecast.length - 1)) * 100},${100 - ((d.balance - minBal) / range) * 100}`
   ).join(' ');
+
+  // Helper to identify bonus types based on calendar month
+  const getBonusLabel = (monthNum: number) => {
+    const now = new Date();
+    const calendarMonth = (now.getMonth() + monthNum) % 12;
+    if (calendarMonth === 11) return "13th Month Pay";
+    if (calendarMonth === 4) return "Mid-Year Bonus";
+    if (calendarMonth === 2) return "Clothing Allowance";
+    return "Bonus Credit";
+  };
+
+  const getBonusIcon = (monthNum: number) => {
+    const now = new Date();
+    const calendarMonth = (now.getMonth() + monthNum) % 12;
+    if (calendarMonth === 2) return <Shirt size={8} />;
+    if (calendarMonth === 4) return <CalendarDays size={8} />;
+    return <Sparkles size={8} />;
+  };
 
   return (
     <motion.div 
@@ -167,7 +190,14 @@ export default function GhostForecast({
             <div key={monthData.month} className={`bg-white/5 border rounded-[2rem] transition-all overflow-hidden ${expandedMonth === monthData.month ? 'border-aura-accent/40 bg-white/[0.07]' : 'border-white/5'}`}>
               <button onClick={() => setExpandedMonth(expandedMonth === monthData.month ? null : monthData.month)} className="w-full p-6 flex items-center justify-between">
                 <div className="text-left">
-                  <p className="text-[10px] font-black text-aura-subtle uppercase mb-1">Month {monthData.month}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-[10px] font-black text-aura-subtle uppercase">Month {monthData.month}</p>
+                    {monthData.isBonusMonth && (
+                      <span className="flex items-center gap-1 bg-aura-accent/20 text-aura-accent text-[8px] px-2 py-0.5 rounded-full font-black uppercase tracking-tighter border border-aura-accent/30">
+                        {getBonusIcon(monthData.month)} {getBonusLabel(monthData.month)}
+                      </span>
+                    )}
+                  </div>
                   <p className={`text-xl font-black tabular-nums ${monthData.status === 'danger' ? 'text-red-500' : 'text-white'}`}>
                     {baseCurrency} {monthData.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                   </p>
@@ -192,6 +222,16 @@ export default function GhostForecast({
                         </div>
                       ))}
 
+                      {/* Bonus Pay if applicable */}
+                      {monthData.isBonusMonth && (
+                        <div className="flex justify-between text-xs font-bold bg-green-400/10 p-2 rounded-lg border border-green-400/20">
+                          <span className="text-green-400 flex items-center gap-1 uppercase tracking-widest text-[10px]">
+                            {getBonusIcon(monthData.month)} {getBonusLabel(monthData.month)}
+                          </span>
+                          <span className="text-green-400">+ {((new Date().getMonth() + monthData.month) % 12 === 2) ? "7,000" : totalIncome.toLocaleString()}</span>
+                        </div>
+                      )}
+
                       {/* Multi-User Bill Breakdown */}
                       {bills.map((bill, idx) => (
                         <div key={`bill-${bill.userId}-${idx}`} className="flex justify-between text-xs font-bold">
@@ -202,10 +242,11 @@ export default function GhostForecast({
                         </div>
                       ))}
                       
+                      {/* Realistic Spend Behavior Section */}
                       <div className="p-3 bg-white/5 rounded-xl space-y-2 border border-white/5">
                         <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
-                          <span className="text-aura-subtle">Base Habit Spend</span>
-                          <span className="text-white/60">- {monthData.baseSpend.toLocaleString()}</span>
+                          <span className="text-aura-subtle">Habitual Spend (Learned)</span>
+                          <span className="text-white/60">- {monthData.baseSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                         </div>
                         <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
                           <span className="text-aura-accent flex items-center gap-1"><TrendingUp size={10}/> Inflation Impact</span>

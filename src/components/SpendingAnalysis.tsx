@@ -101,6 +101,15 @@ export default function SpendingAnalysis({
       }
     });
 
+    // Learning Logic: If we have transaction data, use it to override the variableSpendAvg
+    // This ensures "Burn Rates" reflect actual behavior, not just the setup value.
+    const actualExpenseTotal = filteredByDate
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    
+    // Determine the "Effective" variable spend based on actual habit
+    const realizedHabitSpend = actualExpenseTotal > 0 ? actualExpenseTotal : variableSpendAvg;
+
     // Retention Rate Logic: Only calculate if there is data, else 0
     const retentionRate = periodInflow > 0 ? Math.max(0, ((periodInflow - periodOutflow) / periodInflow) * 100) : 0;
 
@@ -122,8 +131,8 @@ export default function SpendingAnalysis({
     const highestIncome = [...allCategories].sort((a,b) => b.income - a.income)[0] || { name: 'None', income: 0 };
     const lowestIncome = [...allCategories].filter(c => c.income > 0).sort((a,b) => a.income - b.income)[0] || { name: 'None', income: 0 };
 
-    // Burn Rates based on global config (keeping logic consistent with dashboard)
-    const globalOutflow = fixedBills + variableSpendAvg;
+    // Burn Rates based on REALIZED behavior + Fixed Bills
+    const globalOutflow = fixedBills + realizedHabitSpend;
     const dailyBurn = globalOutflow / 30.42;
     const weeklyBurn = globalOutflow / 4.34;
     const yearlyBurn = globalOutflow * 12;
@@ -131,7 +140,7 @@ export default function SpendingAnalysis({
     const insight = getFinancialInsight(
       baseIncome,
       retentionRate,
-      (variableSpendAvg / (globalOutflow || 1)) * 100,
+      (realizedHabitSpend / (globalOutflow || 1)) * 100,
       (fixedBills / (globalOutflow || 1)) * 100,
       highestExpense.name
     );
@@ -150,7 +159,8 @@ export default function SpendingAnalysis({
       highestIncome,
       lowestIncome,
       insight,
-      globalOutflow
+      globalOutflow,
+      realizedHabitSpend
     };
   }, [baseIncome, fixedBills, variableSpendAvg, transactions, filterMode, targetDate]);
 
