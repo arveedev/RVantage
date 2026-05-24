@@ -1,6 +1,7 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { Wallet } from 'lucide-react';
 import type { Account } from '../../db/schema';
+import { useEffect, useRef } from 'react';
 
 interface AccountCardProps {
   config: any;
@@ -14,8 +15,42 @@ interface AccountCardProps {
 }
 
 export default function AccountCard({ config, financialIntel, accounts, showAccounts, setShowAccounts, setEditingAccount, setIsAccountModalOpen, accountIcons }: AccountCardProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // 1. Auto-hide after 30 seconds of inactivity
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    
+    if (showAccounts) {
+      timeoutId = setTimeout(() => {
+        setShowAccounts(false);
+      }, 30000);
+    }
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [showAccounts, setShowAccounts]);
+
+  // 2. Auto-hide when clicking outside the component
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowAccounts(false);
+      }
+    };
+
+    if (showAccounts) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showAccounts, setShowAccounts]);
+
   return (
-    <>
+    <div ref={containerRef} className="space-y-6">
       <div 
         onClick={() => setShowAccounts(!showAccounts)}
         className="bg-aura-card p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden active:scale-[0.98] transition-all cursor-pointer"
@@ -57,6 +92,6 @@ export default function AccountCard({ config, financialIntel, accounts, showAcco
           </motion.section>
         )}
       </AnimatePresence>
-    </>
+    </div>
   );
 }
