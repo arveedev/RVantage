@@ -23,18 +23,40 @@ export default function Simulator({
 }: SimulatorProps) {
   const [view, setView] = useState<'analysis' | 'forecast'>('analysis');
 
-  // Transform single config values into the Entity Arrays required by GhostForecast
-  const incomeArray = [{
-    userId: 'primary',
-    label: 'Base Income',
-    amount: Number(config.net_income || config.monthly_income || 0)
-  }];
+  // Ghost Forecast Rule: 
+  // Map "Gross Base Pay" and "Allowances" into Income so that bonus logic correctly 
+  // doubles the Gross pay, not the Net Pay.
+  const incomeArray = [
+    {
+      userId: 'primary',
+      label: 'Gross Base Pay',
+      amount: Number(config.monthly_income || 0)
+    }
+  ];
 
-  const billsArray = [{
-    userId: 'primary',
-    label: 'Fixed Bills',
-    amount: Number(config.fixed_bills || 0)
-  }];
+  try {
+    const allowances = JSON.parse(config.allowances || '[]');
+    allowances.forEach((a: any) => {
+      incomeArray.push({ userId: 'primary', label: a.label, amount: a.amount });
+    });
+  } catch (e) {}
+
+  // Map "Fixed Bills" and "Tax/Statutory Deductions" into Bills so the trajectory 
+  // realistically depletes the available liquidity month-over-month.
+  const billsArray = [
+    {
+      userId: 'primary',
+      label: 'Fixed Bills',
+      amount: Number(config.fixed_bills || 0)
+    }
+  ];
+
+  try {
+    const deductions = JSON.parse(config.deductions || '[]');
+    deductions.forEach((d: any) => {
+      billsArray.push({ userId: 'primary', label: d.label, amount: d.amount });
+    });
+  } catch (e) {}
 
   return (
     <motion.div 
@@ -46,7 +68,7 @@ export default function Simulator({
       <div className="flex bg-white/5 p-1.5 rounded-[2rem] border border-white/10 backdrop-blur-md">
         <button
           onClick={() => setView('analysis')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all duration-300 active:scale-95 ${
             view === 'analysis' 
               ? 'bg-white text-black shadow-lg shadow-white/5' 
               : 'text-aura-subtle hover:text-white'
@@ -57,7 +79,7 @@ export default function Simulator({
         </button>
         <button
           onClick={() => setView('forecast')}
-          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${
+          className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest transition-all duration-300 active:scale-95 ${
             view === 'forecast' 
               ? 'bg-white text-black shadow-lg shadow-white/5' 
               : 'text-aura-subtle hover:text-white'

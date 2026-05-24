@@ -78,6 +78,14 @@ export function useSync() {
       return;
     }
 
+    // 🛑 CRITICAL OFFLINE FIX: 
+    // Do not overwrite local data if there are offline transactions waiting to be pushed.
+    const unsyncedTx = await db.transactions.where('synced').equals(0).toArray();
+    if (unsyncedTx.length > 0) {
+      console.log("🛡️ Cloud pull blocked: Local offline transactions pending upload. Preventing overwrite.");
+      return;
+    }
+
     isSyncing = true;
 
     try {
