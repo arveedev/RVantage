@@ -18,11 +18,12 @@ export interface Transaction {
   amount: number;
   category: string;
   account_id: string;
+  target_account_id?: string; // ADDED: Explicit target for flawless transfer reversal
   is_shared: boolean;
   is_installment: boolean;
   note?: string;
   synced: number; 
-  is_deleted: number; // ADDED: Soft delete flag (0 = active, 1 = deleted)
+  is_deleted: number; 
   type: 'expense' | 'income' | 'transfer';
   user_id: string; 
 }
@@ -54,11 +55,10 @@ export class RVantageDB extends Dexie {
   constructor() {
     super('RVantageDB');
     
-    // Incremented version to 13 for soft-delete support
-    this.version(13).stores({
+    // Incremented to v14 to safely integrate the target_account_id
+    this.version(14).stores({
       users: 'id, &username, password', 
       session: 'id, user_id',
-      // Added is_deleted to the indexed fields for transactions
       transactions: 'id, date, category, account_id, synced, type, is_shared, is_installment, user_id, is_deleted',
       accounts: 'id, name, balance, is_shared, include_in_glance, icon_marker, icon_color, user_id',
       settings: '[config_key+user_id], config_key, user_id'
@@ -68,14 +68,6 @@ export class RVantageDB extends Dexie {
 
 export const db = new RVantageDB();
 
-// --- CRITICAL RECOVERY LOGIC ---
-
-// 1. Handle Version Blocking (Old tabs or failed upgrades)
-db.on('blocked', () => {
-  console.warn("Database upgrade blocked. Please close other tabs.");
-});
-
-// 2. Explicitly Open with a Global Error Catch
 const initDB = async () => {
   try {
     if (db.isOpen()) return;
@@ -84,7 +76,6 @@ const initDB = async () => {
   } catch (err: any) {
     if (err.name === 'VersionError' || err.name === 'UpgradeError') {
       console.error("❌ Schema mismatch detected. Deleting old database to repair...");
-      // If the schema is so broken it won't open, we delete it so the next refresh starts fresh
       await Dexie.delete('RVantageDB');
       window.location.reload();
     } else {
@@ -93,5 +84,4 @@ const initDB = async () => {
   }
 };
 
-// Execute initialization
 initDB();

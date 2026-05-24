@@ -3,29 +3,22 @@ import { useAuth } from './useAuth';
 
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxOkYlb31V5-p3C8AMqeKm4aJL9ngbohGmc1XhmUKiBOciLTOK_k8iuBrfQbj_uUHKc/exec';
 
-// Module-level state to track sync status across all component instances
 let isSyncing = false;
 let lastSyncTime = 0;
-const SYNC_COOLDOWN = 5000; // 5 seconds cooldown to prevent rapid loops
+const SYNC_COOLDOWN = 5000; 
 
 export function useSync() {
   const { user } = useAuth();
 
-  // New helper to verify if a PIN is already taken in the Google Sheet
   const checkCloudPin = async (pin: string) => {
     try {
       const response = await fetch(`${GAS_URL}?action=getGlobalUsers`);
       const result = await response.json();
       if (result.status === 'success' && result.data) {
-        // Strict comparison using the 'pin' key from Code.gs
-        return result.data.some((remoteUser: any) => 
-          String(remoteUser.pin).trim() === String(pin).trim()
-        );
+        return result.data.some((remoteUser: any) => String(remoteUser.pin).trim() === String(pin).trim());
       }
       return false;
     } catch (e) {
-      console.error("❌ Cloud PIN Check Failed:", e);
-      // Fallback: Check local DB if cloud fetch fails
       const localExists = await db.users.where('password').equals(pin.trim()).first();
       return !!localExists;
     }
@@ -38,26 +31,14 @@ export function useSync() {
         redirect: 'follow',
         body: JSON.stringify({
           action: 'syncUsers',
-          // Data now explicitly uses 'pin' to match the backend headers
-          data: [{
-            id: userData.id,
-            username: userData.username,
-            pin: userData.pin
-          }]
+          data: [{ id: userData.id, username: userData.username, pin: userData.pin }]
         }),
         headers: { 'Content-Type': 'text/plain;charset=utf-8' }
       });
       const result = await response.json();
-      
-      if (result.status === 'error' && result.message === 'PIN_ALREADY_EXISTS') {
-        console.warn("⚠️ Sync blocked: PIN is already registered to another user.");
-        return result;
-      }
-
-      console.log("👤 User Profile Cloud-Synced");
+      if (result.status === 'error' && result.message === 'PIN_ALREADY_EXISTS') return result;
       return result;
     } catch (e) {
-      console.error("❌ User Sync Failed:", e);
       throw e;
     }
   };
@@ -65,26 +46,15 @@ export function useSync() {
   const refreshFromCloud = async () => {
     if (!user?.id || isSyncing) return;
     
-    // Check cooldown
     const now = Date.now();
     if (now - lastSyncTime < SYNC_COOLDOWN) return;
 
-    // Enhanced Check: Postpone if any modal OR the Command Center is active
     const isAdding = document.querySelector('[role="dialog"]') !== null;
     const isCommandCenterOpen = document.querySelector('[data-command-center="true"]') !== null;
-    
-    if (isAdding || isCommandCenterOpen) {
-      console.log("⏳ Sync postponed: User is active in a modal or Command Center.");
-      return;
-    }
+    if (isAdding || isCommandCenterOpen) return;
 
-    // 🛑 CRITICAL OFFLINE FIX: 
-    // Do not overwrite local data if there are offline transactions waiting to be pushed.
     const unsyncedTx = await db.transactions.where('synced').equals(0).toArray();
-    if (unsyncedTx.length > 0) {
-      console.log("🛡️ Cloud pull blocked: Local offline transactions pending upload. Preventing overwrite.");
-      return;
-    }
+    if (unsyncedTx.length > 0) return;
 
     isSyncing = true;
 
@@ -93,7 +63,6 @@ export function useSync() {
       const result = await response.json();
       
       if (result.status === 'success' && result.data) {
-        // --- Sync Accounts ---
         if (result.data.accounts) {
           for (const remoteAcc of result.data.accounts) {
             const localAcc = await db.accounts.get(remoteAcc.id);
@@ -101,14 +70,7 @@ export function useSync() {
             const remoteIsShared = String(remoteAcc.is_shared).toUpperCase() === 'TRUE';
             const remoteIncludeGlance = String(remoteAcc.include_in_glance).toUpperCase() === 'TRUE';
 
-            if (!localAcc || 
-                localAcc.balance !== remoteBalance || 
-                localAcc.name !== remoteAcc.name || 
-                localAcc.is_shared !== remoteIsShared || 
-                localAcc.include_in_glance !== remoteIncludeGlance ||
-                localAcc.icon_marker !== (remoteAcc.icon_marker || 'Wallet') ||
-                localAcc.icon_color !== (remoteAcc.icon_color || '#00d1ff')) {
-              
+            if (!localAcc || localAcc.balance !== remoteBalance || localAcc.name !== remoteAcc.name || localAcc.is_shared !== remoteIsShared || localAcc.include_in_glance !== remoteIncludeGlance || localAcc.icon_marker !== (remoteAcc.icon_marker || 'Wallet') || localAcc.icon_color !== (remoteAcc.icon_color || '#00d1ff')) {
               await db.accounts.put({
                 id: remoteAcc.id,
                 balance: remoteBalance,
@@ -123,36 +85,28 @@ export function useSync() {
           }
         }
         
-        // --- Sync Settings ---
         if (result.data.settings) {
           for (const remoteSetting of result.data.settings) {
             const localSetting = await db.settings.get({ config_key: remoteSetting.config_key, user_id: user.id });
-            
-            // FIXED: Force all incoming values to string. 
             const remoteVal = String(remoteSetting.config_value).trim();
-
             if (!localSetting || localSetting.config_value !== remoteVal) {
-              await db.settings.put({
-                config_key: remoteSetting.config_key,
-                config_value: remoteVal,
-                user_id: user.id
-              });
+              await db.settings.put({ config_key: remoteSetting.config_key, config_value: remoteVal, user_id: user.id });
             }
           }
         }
 
-        // --- Sync Transactions ---
         if (result.data.transactions) {
           for (const remoteTx of result.data.transactions) {
             const localTx = await db.transactions.get(remoteTx.id);
             
-            // ADDED: Handle soft deletes coming from the cloud
-            const isRemoteDeleted = String(remoteTx.is_deleted).toUpperCase() === 'TRUE';
+            // STRICT OFFLINE TRUTH CHECK: If it was deleted locally, IGNORE the cloud entirely.
+            if (localTx && localTx.is_deleted === 1) {
+              continue; 
+            }
 
+            const isRemoteDeleted = String(remoteTx.is_deleted).toUpperCase() === 'TRUE';
             if (isRemoteDeleted) {
-              if (localTx) {
-                await db.transactions.delete(remoteTx.id);
-              }
+              if (localTx) await db.transactions.update(remoteTx.id, { is_deleted: 1 });
               continue;
             }
 
@@ -163,20 +117,19 @@ export function useSync() {
                 amount: parseFloat(remoteTx.amount),
                 category: remoteTx.category,
                 account_id: remoteTx.account_id,
+                target_account_id: remoteTx.target_account_id || undefined,
                 note: remoteTx.note || '',
                 type: remoteTx.type,
                 synced: 1,
                 user_id: user.id,
                 is_shared: String(remoteTx.is_shared).toUpperCase() === 'TRUE',
                 is_installment: String(remoteTx.is_installment).toUpperCase() === 'TRUE',
-                is_deleted: 0 // New records are not deleted
+                is_deleted: 0
               });
             }
           }
         }
-        
         lastSyncTime = Date.now();
-        console.log("💎 Delta-Sync Complete: Data updated.");
       }
     } catch (e) {
       console.error("❌ Cloud Refresh Failed:", e);
@@ -203,33 +156,23 @@ export function useSync() {
       t.type,
       t.is_shared ? "TRUE" : "FALSE",
       t.is_installment ? "TRUE" : "FALSE",
-      t.is_deleted ? "TRUE" : "FALSE" // ADDED: push deleted status to cloud
+      t.is_deleted ? "TRUE" : "FALSE",
+      t.target_account_id || "" // Ensures target is synced
     ]);
 
     try {
       const response = await fetch(GAS_URL, {
         method: 'POST',
         redirect: 'follow',
-        body: JSON.stringify({ 
-          action: 'syncTransactions', 
-          user_id: user.id, 
-          data: dataRows 
-        }),
+        body: JSON.stringify({ action: 'syncTransactions', user_id: user.id, data: dataRows }),
         headers: { 'Content-Type': 'text/plain;charset=utf-8' }
       });
 
       const result = await response.json();
       if (result.status === 'success') {
-        // Now that it's synced, we can actually hard-delete the ones marked as deleted from local DB
-        const deletedIds = unsynced.filter(t => t.is_deleted === 1).map(t => t.id);
-        const activeIds = unsynced.filter(t => t.is_deleted === 0).map(t => t.id);
-
-        if (deletedIds.length > 0) {
-          await db.transactions.where('id').anyOf(deletedIds).delete();
-        }
-        if (activeIds.length > 0) {
-          await db.transactions.where('id').anyOf(activeIds).modify({ synced: 1 });
-        }
+        // DO NOT delete tombstones physically. Keep them so cloud can't resurrect them.
+        const allIds = unsynced.map(t => t.id);
+        await db.transactions.where('id').anyOf(allIds).modify({ synced: 1 });
       }
     } catch (e) {
       console.error("❌ Sync Pipeline Blocked:", e);
@@ -242,31 +185,18 @@ export function useSync() {
 
   const syncSettings = async (settingsToSync?: any[]) => {
     if (!user?.id) return;
-
     const allSettings = settingsToSync || await db.settings.where('user_id').equals(user.id).toArray();
     if (allSettings.length === 0) return;
 
-    const settingsData = allSettings.map(s => ({
-      config_key: s.config_key,
-      config_value: String(s.config_value)
-    }));
+    const settingsData = allSettings.map(s => ({ config_key: s.config_key, config_value: String(s.config_value) }));
 
     try {
-      const response = await fetch(GAS_URL, {
+      await fetch(GAS_URL, {
         method: 'POST',
         redirect: 'follow',
-        body: JSON.stringify({ 
-          action: 'syncSettings', 
-          user_id: user.id, 
-          data: settingsData 
-        }),
+        body: JSON.stringify({ action: 'syncSettings', user_id: user.id, data: settingsData }),
         headers: { 'Content-Type': 'text/plain;charset=utf-8' }
       });
-
-      const result = await response.json();
-      if (result.status === 'success') {
-        console.log("⚙️ Settings Cloud-Synced");
-      }
     } catch (e) {
       console.error("❌ Settings Sync Failed:", e);
     }
@@ -274,35 +204,22 @@ export function useSync() {
 
   const syncAccounts = async () => {
     if (!user?.id) return;
-
     const allAccounts = await db.accounts.where('user_id').equals(user.id).toArray();
     const accountData = allAccounts.map(a => ({
-      id: a.id,
-      name: a.name,
-      balance: a.balance,
-      is_shared: a.is_shared,
-      include_in_glance: a.include_in_glance,
-      icon_marker: a.icon_marker || 'Wallet',
-      icon_color: a.icon_color || '#00d1ff'
+      id: a.id, name: a.name, balance: a.balance, is_shared: a.is_shared,
+      include_in_glance: a.include_in_glance, icon_marker: a.icon_marker || 'Wallet', icon_color: a.icon_color || '#00d1ff'
     }));
 
     try {
       const response = await fetch(GAS_URL, {
         method: 'POST',
         redirect: 'follow',
-        body: JSON.stringify({ 
-          action: 'syncAccounts', 
-          user_id: user.id, 
-          data: accountData 
-        }),
+        body: JSON.stringify({ action: 'syncAccounts', user_id: user.id, data: accountData }),
         headers: { 'Content-Type': 'text/plain;charset=utf-8' }
       });
-      const result = await response.json();
-      console.log("Banks Accounts Cloud-Synced");
-      return result;
+      return await response.json();
     } catch (e) {
       console.error("❌ Accounts Sync Failed:", e);
-      throw e;
     }
   };
 
