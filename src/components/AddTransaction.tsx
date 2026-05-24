@@ -62,13 +62,13 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
       setDisplayAmount(absAmount.toString()); 
       setTransactionDate(new Date(editData.date).toISOString().split('T')[0]);
       
-      if (editData.category.startsWith('Transfer_To_') || editData.type === 'transfer') {
+      if (editData.type === 'transfer' || editData.category.includes('::')) {
         setType('transfer');
         setCategory('Transfer');
         
         let parsedTargetId = editData.target_account_id;
-        if (!parsedTargetId && editData.category.startsWith('Transfer_To_')) {
-          parsedTargetId = editData.category.replace('Transfer_To_', '');
+        if (editData.category.includes('::')) {
+          parsedTargetId = editData.category.split('::')[1];
         }
         setTargetAccountId(parsedTargetId || "");
       } else {
@@ -168,8 +168,8 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             }
             
             let oldTargetId = editData.target_account_id;
-            if (!oldTargetId && editData.category.startsWith('Transfer_To_')) {
-              oldTargetId = editData.category.replace('Transfer_To_', '');
+            if (editData.category.includes('::')) {
+              oldTargetId = editData.category.split('::')[1];
             }
             if (oldTargetId) {
               const oldTargetAcc = await db.accounts.get(oldTargetId);
@@ -189,7 +189,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             // 3. Update Record
             await db.transactions.update(editData.id, {
               amount: -numAmount,
-              category: 'Transfer',
+              category: `Transfer::${targetAccountId}`, // Bulletproof hidden assignment
               account_id: selectedAccountId,
               target_account_id: targetAccountId,
               note: `${newSourceAcc?.name} → ${newTargetAcc?.name}`,
@@ -211,7 +211,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 user_id: user.id,
                 date: finalDate,
                 amount: -numAmount, 
-                category: 'Transfer', 
+                category: `Transfer::${targetAccountId}`, // Bulletproof hidden assignment
                 target_account_id: targetAccountId,
                 note: `${fromAcc.name} → ${toAcc.name}`,
                 type: 'transfer',

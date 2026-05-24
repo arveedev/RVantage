@@ -53,8 +53,14 @@ export function useSync() {
     const isCommandCenterOpen = document.querySelector('[data-command-center="true"]') !== null;
     if (isAdding || isCommandCenterOpen) return;
 
-    const unsyncedTx = await db.transactions.where('synced').equals(0).toArray();
-    if (unsyncedTx.length > 0) return;
+    // 🚨 ABSOLUTE TRUTH FIREWALL 🚨
+    // If the local device already has data, NEVER pull from the cloud.
+    // The cloud is strictly a backup. It only pulls on a fresh login (empty DB).
+    const localTxCount = await db.transactions.count();
+    if (localTxCount > 0) {
+      console.log("🛡️ Local data is absolute truth. Cloud pull aborted to prevent ghost transactions.");
+      return;
+    }
 
     isSyncing = true;
 
@@ -99,21 +105,6 @@ export function useSync() {
           for (const remoteTx of result.data.transactions) {
             const localTx = await db.transactions.get(remoteTx.id);
             
-            // ABSOLUTE TRUTH FIREWALL: If local device marked it deleted, permanently reject cloud version.
-            if (localTx && localTx.is_deleted === 1) {
-              continue; 
-            }
-
-            const isRemoteDeleted = String(remoteTx.is_deleted).toUpperCase() === 'TRUE';
-            
-            if (isRemoteDeleted) {
-              if (localTx) {
-                localTx.is_deleted = 1;
-                await db.transactions.put(localTx);
-              }
-              continue;
-            }
-
             if (!localTx) {
               await db.transactions.put({
                 id: remoteTx.id,
@@ -182,7 +173,7 @@ export function useSync() {
     } finally {
       isSyncing = false;
       await syncAccounts();
-      await refreshFromCloud();
+      // Notice: We do NOT call refreshFromCloud() here anymore to protect local truth
     }
   };
 

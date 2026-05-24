@@ -51,7 +51,7 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
         const existingTx = await db.transactions.get(t.id);
         if (!existingTx) return;
 
-        // 1. Revert Source Account
+        // 1. Revert Source Account (Bank)
         const srcAcc = await db.accounts.get(existingTx.account_id);
         if (srcAcc) {
           await db.accounts.update(existingTx.account_id, {
@@ -59,19 +59,17 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
           });
         }
 
-        // 2. Revert Target Account (If Transfer)
+        // 2. Revert Target Account (Wallet)
         if (existingTx.type === 'transfer') {
-          let targetId = existingTx.target_account_id;
-          
-          // Fallback parser just in case it was a ghost record
-          if (!targetId && existingTx.category.startsWith('Transfer_To_')) {
-            targetId = existingTx.category.replace('Transfer_To_', '');
-          }
+          // Extract the target ID from the hidden separator in the category string
+          const targetId = existingTx.category.includes('::') 
+            ? existingTx.category.split('::')[1] 
+            : existingTx.target_account_id;
 
           if (targetId) {
             const targetAcc = await db.accounts.get(targetId);
             if (targetAcc) {
-              // The transfer ADDED to the target. To revert, we SUBTRACT the absolute amount.
+              // The transfer ADDED to the wallet. To revert, we SUBTRACT the absolute amount.
               await db.accounts.update(targetId, {
                 balance: targetAcc.balance - Math.abs(existingTx.amount)
               });
@@ -79,14 +77,12 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
           }
         }
         
-        // 3. Set local tombstone using PUT to guarantee properties exist
-        existingTx.is_deleted = 1;
-        existingTx.synced = 0;
-        await db.transactions.put(existingTx);
+        // 3. TRUE DELETE. No more tombstones. 
+        await db.transactions.delete(t.id);
       });
       
       setActiveMenu(null);
-      syncTransactions(); 
+      syncTransactions(); // Force push the current accurate state
     } catch(e) {
       console.error("Deletion failed:", e);
     }
@@ -126,7 +122,6 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
             onMouseUp={handleTouchEnd}
             onMouseLeave={handleTouchEnd}
           >
-            {/* Added pointer-events-none to children so text cannot be highlighted */}
             <div className="flex items-center gap-4 relative z-10 pointer-events-none select-none">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                 t.type === 'income' ? 'bg-aura-accent/20 text-aura-accent' : 'bg-red-500/20 text-red-400'
@@ -134,12 +129,13 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
                 {t.type === 'income' ? <ArrowUpRight size={18}/> : <ArrowDownLeft size={18}/>}
               </div>
               <div>
+                {/* Clean UI: Strip the hidden target ID out so it just says "Transfer" */}
                 <p className="font-bold text-sm text-white select-none">
-                  {t.category.startsWith('Transfer_To_') ? 'Transfer' : t.category}
+                  {t.category.split('::')[0]}
                 </p>
                 <p className="text-[10px] text-aura-subtle font-medium uppercase tracking-tighter select-none">
                   {new Date(t.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} 
-                  {t.note && !t.note.includes('ACC-') ? ` • ${t.note}` : ''}
+                  {t.note ? ` • ${t.note}` : ''}
                 </p>
               </div>
             </div>
