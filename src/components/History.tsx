@@ -20,7 +20,7 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
   }, []);
 
   const transactions = useLiveQuery(() => 
-    db.transactions.orderBy('date').reverse().filter(t => t.is_deleted === 0).toArray()
+    db.transactions.orderBy('date').reverse().filter(t => !t.is_deleted || t.is_deleted === 0).toArray()
   );
 
   const handleTouchStart = (id: string) => {
@@ -48,27 +48,41 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
     
     try {
       await db.transaction('rw', [db.transactions, db.accounts], async () => {
-        // 1. Revert Source Account Balance
-        const acc = await db.accounts.get(t.account_id);
-        if (acc) {
-          await db.accounts.update(t.account_id, {
-            balance: acc.balance - t.amount
+        const existingTx = await db.transactions.get(t.id);
+        if (!existingTx) return;
+
+        // 1. Revert Source Account
+        const srcAcc = await db.accounts.get(existingTx.account_id);
+        if (srcAcc) {
+          await db.accounts.update(existingTx.account_id, {
+            balance: srcAcc.balance - existingTx.amount
           });
         }
 
-        // 2. Revert Target Account Balance (If Transfer)
-        if (t.type === 'transfer' && t.target_account_id) {
-          const targetAcc = await db.accounts.get(t.target_account_id);
-          if (targetAcc) {
-            // Revert the exact absolute amount that was deposited into the target
-            await db.accounts.update(t.target_account_id, {
-              balance: targetAcc.balance - Math.abs(t.amount)
-            });
+        // 2. Revert Target Account (If Transfer)
+        if (existingTx.type === 'transfer') {
+          let targetId = existingTx.target_account_id;
+          
+          // Fallback parser just in case it was a ghost record
+          if (!targetId && existingTx.category.startsWith('Transfer_To_')) {
+            targetId = existingTx.category.replace('Transfer_To_', '');
+          }
+
+          if (targetId) {
+            const targetAcc = await db.accounts.get(targetId);
+            if (targetAcc) {
+              // The transfer ADDED to the target. To revert, we SUBTRACT the absolute amount.
+              await db.accounts.update(targetId, {
+                balance: targetAcc.balance - Math.abs(existingTx.amount)
+              });
+            }
           }
         }
         
-        // 3. Set local tombstone
-        await db.transactions.update(t.id, { is_deleted: 1, synced: 0 });
+        // 3. Set local tombstone using PUT to guarantee properties exist
+        existingTx.is_deleted = 1;
+        existingTx.synced = 0;
+        await db.transactions.put(existingTx);
       });
       
       setActiveMenu(null);
@@ -97,7 +111,7 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             key={t.id}
-            className="bg-white/5 border border-white/5 p-5 rounded-[1.5rem] flex justify-between items-center relative overflow-hidden"
+            className="bg-white/5 border border-white/5 p-5 rounded-[1.5rem] flex justify-between items-center relative overflow-hidden select-none cursor-pointer"
             style={{ 
               WebkitTouchCallout: 'none', 
               WebkitUserSelect: 'none', 
@@ -112,23 +126,26 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
             onMouseUp={handleTouchEnd}
             onMouseLeave={handleTouchEnd}
           >
-            <div className="flex items-center gap-4 relative z-10 pointer-events-none">
+            {/* Added pointer-events-none to children so text cannot be highlighted */}
+            <div className="flex items-center gap-4 relative z-10 pointer-events-none select-none">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                 t.type === 'income' ? 'bg-aura-accent/20 text-aura-accent' : 'bg-red-500/20 text-red-400'
               }`}>
                 {t.type === 'income' ? <ArrowUpRight size={18}/> : <ArrowDownLeft size={18}/>}
               </div>
               <div>
-                {/* CLEAN UI RESTORED */}
-                <p className="font-bold text-sm text-white">{t.category}</p>
-                <p className="text-[10px] text-aura-subtle font-medium uppercase tracking-tighter">
-                  {new Date(t.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} • {t.note || 'No description'}
+                <p className="font-bold text-sm text-white select-none">
+                  {t.category.startsWith('Transfer_To_') ? 'Transfer' : t.category}
+                </p>
+                <p className="text-[10px] text-aura-subtle font-medium uppercase tracking-tighter select-none">
+                  {new Date(t.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} 
+                  {t.note && !t.note.includes('ACC-') ? ` • ${t.note}` : ''}
                 </p>
               </div>
             </div>
             
-            <div className="text-right relative z-10 pointer-events-none">
-              <p className={`font-black tabular-nums ${t.type === 'income' ? 'text-aura-accent' : 'text-white'}`}>
+            <div className="text-right relative z-10 pointer-events-none select-none">
+              <p className={`font-black tabular-nums select-none ${t.type === 'income' ? 'text-aura-accent' : 'text-white'}`}>
                 {t.type === 'income' ? '+' : ''}{t.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </p>
               {t.synced === 0 && (

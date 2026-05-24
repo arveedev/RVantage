@@ -99,14 +99,18 @@ export function useSync() {
           for (const remoteTx of result.data.transactions) {
             const localTx = await db.transactions.get(remoteTx.id);
             
-            // STRICT OFFLINE TRUTH CHECK: If it was deleted locally, IGNORE the cloud entirely.
+            // ABSOLUTE TRUTH FIREWALL: If local device marked it deleted, permanently reject cloud version.
             if (localTx && localTx.is_deleted === 1) {
               continue; 
             }
 
             const isRemoteDeleted = String(remoteTx.is_deleted).toUpperCase() === 'TRUE';
+            
             if (isRemoteDeleted) {
-              if (localTx) await db.transactions.update(remoteTx.id, { is_deleted: 1 });
+              if (localTx) {
+                localTx.is_deleted = 1;
+                await db.transactions.put(localTx);
+              }
               continue;
             }
 
@@ -157,7 +161,7 @@ export function useSync() {
       t.is_shared ? "TRUE" : "FALSE",
       t.is_installment ? "TRUE" : "FALSE",
       t.is_deleted ? "TRUE" : "FALSE",
-      t.target_account_id || "" // Ensures target is synced
+      t.target_account_id || "" 
     ]);
 
     try {
@@ -170,7 +174,6 @@ export function useSync() {
 
       const result = await response.json();
       if (result.status === 'success') {
-        // DO NOT delete tombstones physically. Keep them so cloud can't resurrect them.
         const allIds = unsynced.map(t => t.id);
         await db.transactions.where('id').anyOf(allIds).modify({ synced: 1 });
       }

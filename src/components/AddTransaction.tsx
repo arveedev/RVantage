@@ -41,7 +41,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
   );
   
   const transactions = useLiveQuery(
-    () => db.transactions.where('user_id').equals(user?.id || '').filter(t => t.is_deleted === 0).toArray(),
+    () => db.transactions.where('user_id').equals(user?.id || '').filter(t => !t.is_deleted || t.is_deleted === 0).toArray(),
     [user?.id]
   );
 
@@ -65,9 +65,12 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
       if (editData.category.startsWith('Transfer_To_') || editData.type === 'transfer') {
         setType('transfer');
         setCategory('Transfer');
-        // Decode the target ID from the category string
-        const parsedTargetId = editData.category.replace('Transfer_To_', '');
-        setTargetAccountId(parsedTargetId);
+        
+        let parsedTargetId = editData.target_account_id;
+        if (!parsedTargetId && editData.category.startsWith('Transfer_To_')) {
+          parsedTargetId = editData.category.replace('Transfer_To_', '');
+        }
+        setTargetAccountId(parsedTargetId || "");
       } else {
         setType(editData.amount < 0 ? 'expense' : 'income');
         setCategory(editData.category);
@@ -94,7 +97,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
     const counts: Record<string, number> = {};
     transactions
-      .filter(t => t.type === type && !t.category.startsWith('Transfer_To_'))
+      .filter(t => t.type === type && !t.category.startsWith('Transfer'))
       .forEach(t => {
         counts[t.category] = (counts[t.category] || 0) + 1;
       });
@@ -161,10 +164,14 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             // 1. Revert Old Transfer Math
             const oldSourceAcc = await db.accounts.get(editData.account_id);
             if (oldSourceAcc) {
-              await db.accounts.update(editData.account_id, { balance: oldSourceAcc.balance - editData.amount }); // editData.amount is negative
+              await db.accounts.update(editData.account_id, { balance: oldSourceAcc.balance - editData.amount }); 
             }
-            if (editData.category.startsWith('Transfer_To_')) {
-              const oldTargetId = editData.category.replace('Transfer_To_', '');
+            
+            let oldTargetId = editData.target_account_id;
+            if (!oldTargetId && editData.category.startsWith('Transfer_To_')) {
+              oldTargetId = editData.category.replace('Transfer_To_', '');
+            }
+            if (oldTargetId) {
               const oldTargetAcc = await db.accounts.get(oldTargetId);
               if (oldTargetAcc) {
                 await db.accounts.update(oldTargetId, { balance: oldTargetAcc.balance - Math.abs(editData.amount) });
@@ -182,8 +189,9 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
             // 3. Update Record
             await db.transactions.update(editData.id, {
               amount: -numAmount,
-              category: `Transfer_To_${targetAccountId}`,
+              category: 'Transfer',
               account_id: selectedAccountId,
+              target_account_id: targetAccountId,
               note: `${newSourceAcc?.name} → ${newTargetAcc?.name}`,
               date: finalDate,
               synced: 0
@@ -203,7 +211,8 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
                 user_id: user.id,
                 date: finalDate,
                 amount: -numAmount, 
-                category: `Transfer_To_${targetAccountId}`, // Encoded for perfectly accurate deletion reversal
+                category: 'Transfer', 
+                target_account_id: targetAccountId,
                 note: `${fromAcc.name} → ${toAcc.name}`,
                 type: 'transfer',
                 account_id: selectedAccountId,
