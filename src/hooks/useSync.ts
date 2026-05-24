@@ -129,7 +129,6 @@ export function useSync() {
             const localSetting = await db.settings.get({ config_key: remoteSetting.config_key, user_id: user.id });
             
             // FIXED: Force all incoming values to string. 
-            // Combined with backend getDisplayValues(), this ensures "15, 30" stays "15, 30".
             const remoteVal = String(remoteSetting.config_value).trim();
 
             if (!localSetting || localSetting.config_value !== remoteVal) {
@@ -147,6 +146,16 @@ export function useSync() {
           for (const remoteTx of result.data.transactions) {
             const localTx = await db.transactions.get(remoteTx.id);
             
+            // ADDED: Handle soft deletes coming from the cloud
+            const isRemoteDeleted = String(remoteTx.is_deleted).toUpperCase() === 'TRUE';
+
+            if (isRemoteDeleted) {
+              if (localTx) {
+                await db.transactions.delete(remoteTx.id);
+              }
+              continue;
+            }
+
             if (!localTx) {
               await db.transactions.put({
                 id: remoteTx.id,
@@ -158,9 +167,9 @@ export function useSync() {
                 type: remoteTx.type,
                 synced: 1,
                 user_id: user.id,
-                // Fixed: Providing boolean values to match Transaction interface
                 is_shared: String(remoteTx.is_shared).toUpperCase() === 'TRUE',
-                is_installment: String(remoteTx.is_installment).toUpperCase() === 'TRUE'
+                is_installment: String(remoteTx.is_installment).toUpperCase() === 'TRUE',
+                is_deleted: 0 // New records are not deleted
               });
             }
           }
@@ -193,7 +202,8 @@ export function useSync() {
       t.note || '', 
       t.type,
       t.is_shared ? "TRUE" : "FALSE",
-      t.is_installment ? "TRUE" : "FALSE"
+      t.is_installment ? "TRUE" : "FALSE",
+      t.is_deleted ? "TRUE" : "FALSE" // ADDED: push deleted status to cloud
     ]);
 
     try {
@@ -210,8 +220,16 @@ export function useSync() {
 
       const result = await response.json();
       if (result.status === 'success') {
-        const ids = unsynced.map(t => t.id);
-        await db.transactions.where('id').anyOf(ids).modify({ synced: 1 });
+        // Now that it's synced, we can actually hard-delete the ones marked as deleted from local DB
+        const deletedIds = unsynced.filter(t => t.is_deleted === 1).map(t => t.id);
+        const activeIds = unsynced.filter(t => t.is_deleted === 0).map(t => t.id);
+
+        if (deletedIds.length > 0) {
+          await db.transactions.where('id').anyOf(deletedIds).delete();
+        }
+        if (activeIds.length > 0) {
+          await db.transactions.where('id').anyOf(activeIds).modify({ synced: 1 });
+        }
       }
     } catch (e) {
       console.error("❌ Sync Pipeline Blocked:", e);

@@ -78,6 +78,27 @@ function AppContent() {
 }
 
 export default function App() {
+  // GLOBAL TOUCH RIPPLE EFFECT
+  useEffect(() => {
+    const handleTouch = (e: TouchEvent) => {
+      const ripple = document.createElement("div");
+      ripple.className = "absolute bg-aura-accent/30 rounded-full animate-ping z-[9999] pointer-events-none";
+      ripple.style.width = "40px";
+      ripple.style.height = "40px";
+      // Center the ripple on the touch point
+      ripple.style.left = `${e.touches[0].clientX - 20}px`;
+      ripple.style.top = `${e.touches[0].clientY - 20}px`;
+      document.body.appendChild(ripple);
+      
+      // Clean up the DOM element after animation completes
+      setTimeout(() => ripple.remove(), 500);
+    };
+    
+    // Listen for touchstarts globally
+    window.addEventListener('touchstart', handleTouch);
+    return () => window.removeEventListener('touchstart', handleTouch);
+  }, []);
+
   return (
     <ToastProvider>
       <AuthProvider>

@@ -22,6 +22,7 @@ export interface Transaction {
   is_installment: boolean;
   note?: string;
   synced: number; 
+  is_deleted: number; // ADDED: Soft delete flag (0 = active, 1 = deleted)
   type: 'expense' | 'income' | 'transfer';
   user_id: string; 
 }
@@ -53,12 +54,12 @@ export class RVantageDB extends Dexie {
   constructor() {
     super('RVantageDB');
     
-    // Incremented version to 12 to trigger schema update
-    this.version(12).stores({
+    // Incremented version to 13 for soft-delete support
+    this.version(13).stores({
       users: 'id, &username, password', 
       session: 'id, user_id',
-      // Added is_shared to the indexed fields for transactions
-      transactions: 'id, date, category, account_id, synced, type, is_shared, is_installment, user_id',
+      // Added is_deleted to the indexed fields for transactions
+      transactions: 'id, date, category, account_id, synced, type, is_shared, is_installment, user_id, is_deleted',
       accounts: 'id, name, balance, is_shared, include_in_glance, icon_marker, icon_color, user_id',
       settings: '[config_key+user_id], config_key, user_id'
     });

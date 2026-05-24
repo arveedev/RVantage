@@ -40,8 +40,9 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     [user?.id]
   );
   
+  // Exclude deleted transactions when computing category defaults
   const transactions = useLiveQuery(
-    () => db.transactions.where('user_id').equals(user?.id || '').toArray(),
+    () => db.transactions.where('user_id').equals(user?.id || '').filter(t => t.is_deleted === 0).toArray(),
     [user?.id]
   );
 
@@ -169,7 +170,8 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               account_id: selectedAccountId,
               synced: 0,
               is_shared: false,
-              is_installment: false
+              is_installment: false,
+              is_deleted: 0 // EXPLICITLY MARK AS ACTIVE
             });
           }
         } else {
@@ -211,7 +213,8 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               account_id: selectedAccountId,
               synced: 0,
               is_shared: false,
-              is_installment: false
+              is_installment: false,
+              is_deleted: 0 // EXPLICITLY MARK AS ACTIVE
             });
 
             if (account) {

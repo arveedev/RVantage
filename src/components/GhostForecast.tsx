@@ -52,21 +52,24 @@ export default function GhostForecast({
     bills.reduce((sum, item) => sum + Math.max(0, item.amount), 0), 
   [bills]);
 
-  // The Ghost Forecast now uses the variableSpendAvg (Habit Spend) 
-  // to simulate realistic monthly depletion.
+  // FORECAST LEARNING APPLIED: 
+  // We multiply the historical habit spend by 1.05 (5% safety buffer). 
+  // This prevents the forecast from being too optimistic and forces it 
+  // to account for unexpected variance in your realistic behavior.
+  const realisticHabitSpend = variableSpendAvg > 0 ? variableSpendAvg * 1.05 : variableSpendAvg;
+
   const forecast = useMemo(() => calculateGhostForecast({
     currentBalance: currentBalance,
     monthlyIncome: totalIncome, 
     fixedBills: totalBills,
-    variableSpend: variableSpendAvg,
+    variableSpend: realisticHabitSpend,
     purchasePrice,
     interestRate: interest,
     termMonths: term,
     isCash,
     inflation
-  }), [currentBalance, totalIncome, totalBills, variableSpendAvg, purchasePrice, interest, term, isCash, inflation]);
+  }), [currentBalance, totalIncome, totalBills, realisticHabitSpend, purchasePrice, interest, term, isCash, inflation]);
 
-  // Ensure the display forecast matches the selected term length or a minimum lookahead
   const displayForecast = useMemo(() => {
     const monthsToDisplay = isCash ? 12 : Math.max(term, 12);
     return forecast.slice(0, monthsToDisplay);
@@ -80,7 +83,6 @@ export default function GhostForecast({
     `${(i / (displayForecast.length - 1)) * 100},${100 - ((d.balance - minBal) / range) * 100}`
   ).join(' ');
 
-  // Helper to identify bonus types based on calendar month
   const getBonusLabel = (monthNum: number) => {
     const now = new Date();
     const calendarMonth = (now.getMonth() + monthNum) % 12;
@@ -212,7 +214,6 @@ export default function GhostForecast({
                 {expandedMonth === monthData.month && (
                   <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="px-6 pb-6 border-t border-white/5 pt-5 space-y-4 bg-black/20">
                     <div className="space-y-3">
-                      {/* Multi-User Income Breakdown */}
                       {incomes.map((inc, idx) => (
                         <div key={`inc-${inc.userId}-${idx}`} className="flex justify-between text-xs font-bold">
                           <span className="text-aura-subtle flex items-center gap-1">
@@ -222,7 +223,6 @@ export default function GhostForecast({
                         </div>
                       ))}
 
-                      {/* Bonus Pay if applicable */}
                       {monthData.isBonusMonth && (
                         <div className="flex justify-between text-xs font-bold bg-green-400/10 p-2 rounded-lg border border-green-400/20">
                           <span className="text-green-400 flex items-center gap-1 uppercase tracking-widest text-[10px]">
@@ -232,7 +232,6 @@ export default function GhostForecast({
                         </div>
                       )}
 
-                      {/* Multi-User Bill Breakdown */}
                       {bills.map((bill, idx) => (
                         <div key={`bill-${bill.userId}-${idx}`} className="flex justify-between text-xs font-bold">
                           <span className="text-aura-subtle flex items-center gap-1">
@@ -242,10 +241,9 @@ export default function GhostForecast({
                         </div>
                       ))}
                       
-                      {/* Realistic Spend Behavior Section */}
                       <div className="p-3 bg-white/5 rounded-xl space-y-2 border border-white/5">
                         <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
-                          <span className="text-aura-subtle">Habitual Spend (Learned)</span>
+                          <span className="text-aura-subtle">Habit Spend (+5% Buffer)</span>
                           <span className="text-white/60">- {monthData.baseSpend.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
                         </div>
                         <div className="flex justify-between text-[10px] font-black uppercase tracking-tighter">
