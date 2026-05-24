@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/schema'; // Ensure this path matches your directory
+import { db } from '../db/schema'; 
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowUpRight, ArrowDownLeft, Clock, Edit2, Trash2 } from 'lucide-react';
 import { useSync } from '../hooks/useSync';
@@ -50,20 +50,31 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
     
     try {
       await db.transaction('rw', [db.transactions, db.accounts], async () => {
-        // 1. Revert Account Balance Safely
+        
+        // 1. Revert Source Account Balance
         const acc = await db.accounts.get(t.account_id);
         if (acc) {
-          let amountToRestore = 0;
-          if (t.type === 'expense') amountToRestore = Math.abs(t.amount); 
-          else if (t.type === 'income') amountToRestore = -Math.abs(t.amount);
-          else if (t.type === 'transfer') amountToRestore = Math.abs(t.amount); // Transfers are logged negative on source
-
+          // Mathematically perfect reversal: subtracting the original amount.
+          // Expense (-500) -> balance - (-500) = balance + 500
+          // Income (+500) -> balance - (+500) = balance - 500
           await db.accounts.update(t.account_id, {
-            balance: acc.balance + amountToRestore
+            balance: acc.balance - t.amount
           });
         }
+
+        // 2. Revert Target Account Balance (If it was a transfer)
+        if (t.type === 'transfer' && t.category.startsWith('Transfer_To_')) {
+          const targetId = t.category.replace('Transfer_To_', '');
+          const targetAcc = await db.accounts.get(targetId);
+          if (targetAcc) {
+            // A transfer added Math.abs(t.amount) to the target. Subtract it to reverse.
+            await db.accounts.update(targetId, {
+              balance: targetAcc.balance - Math.abs(t.amount)
+            });
+          }
+        }
         
-        // 2. Soft Delete (Tombstone) the record
+        // 3. Soft Delete (Tombstone) the record
         await db.transactions.update(t.id, { is_deleted: 1, synced: 0 });
       });
       
@@ -93,9 +104,15 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             key={t.id}
-            // Block native text selection on long-press to ensure clean UX
-            className="bg-white/5 border border-white/5 p-5 rounded-[1.5rem] flex justify-between items-center relative select-none overflow-hidden"
-            style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none', userSelect: 'none' }}
+            // Strict selection blockers for iOS/Android touch
+            className="bg-white/5 border border-white/5 p-5 rounded-[1.5rem] flex justify-between items-center relative overflow-hidden"
+            style={{ 
+              WebkitTouchCallout: 'none', 
+              WebkitUserSelect: 'none', 
+              userSelect: 'none',
+              WebkitTapHighlightColor: 'transparent'
+            }}
+            onContextMenu={(e) => e.preventDefault()}
             onTouchStart={() => handleTouchStart(t.id)}
             onTouchEnd={handleTouchEnd}
             onTouchMove={handleTouchEnd} 
@@ -103,14 +120,16 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
             onMouseUp={handleTouchEnd}
             onMouseLeave={handleTouchEnd}
           >
-            <div className="flex items-center gap-4 relative z-10">
+            <div className="flex items-center gap-4 relative z-10 pointer-events-none">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                 t.type === 'income' ? 'bg-aura-accent/20 text-aura-accent' : 'bg-red-500/20 text-red-400'
               }`}>
                 {t.type === 'income' ? <ArrowUpRight size={18}/> : <ArrowDownLeft size={18}/>}
               </div>
               <div>
-                <p className="font-bold text-sm text-white">{t.category}</p>
+                <p className="font-bold text-sm text-white">
+                  {t.category.startsWith('Transfer_To_') ? 'Transfer' : t.category}
+                </p>
                 <p className="text-[10px] text-aura-subtle font-medium uppercase tracking-tighter">
                   {new Date(t.date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} • {t.note || 'No description'}
                 </p>
@@ -139,24 +158,23 @@ export default function History({ setEditingTransaction, setIsModalOpen }: Histo
                   className="absolute inset-0 bg-black/90 backdrop-blur-sm z-20 flex items-center justify-center gap-6"
                 >
                   <button 
-                    onClick={() => handleEdit(t)} 
+                    onClick={(e) => { e.stopPropagation(); handleEdit(t); }} 
                     className="flex flex-col items-center gap-1 text-aura-accent active:scale-90 transition-transform"
                   >
                     <div className="p-3 bg-aura-accent/20 rounded-full"><Edit2 size={16} /></div>
                     <span className="text-[8px] font-black uppercase tracking-widest">Edit</span>
                   </button>
                   <button 
-                    onClick={() => handleDelete(t)} 
+                    onClick={(e) => { e.stopPropagation(); handleDelete(t); }} 
                     className="flex flex-col items-center gap-1 text-red-500 active:scale-90 transition-transform"
                   >
                     <div className="p-3 bg-red-500/20 rounded-full"><Trash2 size={16} /></div>
                     <span className="text-[8px] font-black uppercase tracking-widest">Delete</span>
                   </button>
                   
-                  {/* Cancel overlay click */}
                   <button 
                     onClick={(e) => { e.stopPropagation(); setActiveMenu(null); }}
-                    className="absolute top-2 right-2 p-2 text-white/40"
+                    className="absolute top-2 right-2 p-2 text-white/40 active:scale-90"
                   >
                     <span className="text-[8px] font-black uppercase">Cancel</span>
                   </button>

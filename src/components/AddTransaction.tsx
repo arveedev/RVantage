@@ -40,7 +40,6 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
     [user?.id]
   );
   
-  // Exclude deleted transactions when computing category defaults
   const transactions = useLiveQuery(
     () => db.transactions.where('user_id').equals(user?.id || '').filter(t => t.is_deleted === 0).toArray(),
     [user?.id]
@@ -61,12 +60,17 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
       const absAmount = Math.abs(editData.amount);
       setRawAmount(absAmount.toString());
       setDisplayAmount(absAmount.toString()); 
-      setCategory(editData.category);
       setTransactionDate(new Date(editData.date).toISOString().split('T')[0]);
-      if (editData.category === 'Transfer' || editData.type === 'transfer') {
+      
+      if (editData.category.startsWith('Transfer_To_') || editData.type === 'transfer') {
         setType('transfer');
+        setCategory('Transfer');
+        // Decode the target ID from the category string
+        const parsedTargetId = editData.category.replace('Transfer_To_', '');
+        setTargetAccountId(parsedTargetId);
       } else {
         setType(editData.amount < 0 ? 'expense' : 'income');
+        setCategory(editData.category);
       }
       setSelectedAccountId(editData.account_id);
     } else if (isOpen) {
@@ -90,7 +94,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
     const counts: Record<string, number> = {};
     transactions
-      .filter(t => t.type === type && t.category !== 'Transfer')
+      .filter(t => t.type === type && !t.category.startsWith('Transfer_To_'))
       .forEach(t => {
         counts[t.category] = (counts[t.category] || 0) + 1;
       });
@@ -151,30 +155,67 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
 
     try {
       await db.transaction('rw', [db.transactions, db.accounts], async () => {
+        
         if (type === 'transfer') {
-          const fromAcc = await db.accounts.get(selectedAccountId);
-          const toAcc = await db.accounts.get(targetAccountId);
+          if (editData) {
+            // 1. Revert Old Transfer Math
+            const oldSourceAcc = await db.accounts.get(editData.account_id);
+            if (oldSourceAcc) {
+              await db.accounts.update(editData.account_id, { balance: oldSourceAcc.balance - editData.amount }); // editData.amount is negative
+            }
+            if (editData.category.startsWith('Transfer_To_')) {
+              const oldTargetId = editData.category.replace('Transfer_To_', '');
+              const oldTargetAcc = await db.accounts.get(oldTargetId);
+              if (oldTargetAcc) {
+                await db.accounts.update(oldTargetId, { balance: oldTargetAcc.balance - Math.abs(editData.amount) });
+              }
+            }
 
-          if (fromAcc && toAcc) {
-            await db.accounts.update(selectedAccountId, { balance: fromAcc.balance - numAmount });
-            await db.accounts.update(targetAccountId, { balance: toAcc.balance + numAmount });
+            // 2. Apply New Transfer Math
+            const newSourceAcc = await db.accounts.get(selectedAccountId); 
+            const newTargetAcc = await db.accounts.get(targetAccountId);
+            if (newSourceAcc && newTargetAcc) {
+              await db.accounts.update(selectedAccountId, { balance: newSourceAcc.balance - numAmount });
+              await db.accounts.update(targetAccountId, { balance: newTargetAcc.balance + numAmount });
+            }
 
-            await db.transactions.add({
-              id: crypto.randomUUID(),
-              user_id: user.id,
-              date: finalDate,
-              amount: -numAmount, 
-              category: 'Transfer', 
-              note: `${fromAcc.name} → ${toAcc.name}`,
-              type: 'transfer',
+            // 3. Update Record
+            await db.transactions.update(editData.id, {
+              amount: -numAmount,
+              category: `Transfer_To_${targetAccountId}`,
               account_id: selectedAccountId,
-              synced: 0,
-              is_shared: false,
-              is_installment: false,
-              is_deleted: 0 // EXPLICITLY MARK AS ACTIVE
+              note: `${newSourceAcc?.name} → ${newTargetAcc?.name}`,
+              date: finalDate,
+              synced: 0
             });
+
+          } else {
+            // Standard New Transfer
+            const fromAcc = await db.accounts.get(selectedAccountId);
+            const toAcc = await db.accounts.get(targetAccountId);
+
+            if (fromAcc && toAcc) {
+              await db.accounts.update(selectedAccountId, { balance: fromAcc.balance - numAmount });
+              await db.accounts.update(targetAccountId, { balance: toAcc.balance + numAmount });
+
+              await db.transactions.add({
+                id: crypto.randomUUID(),
+                user_id: user.id,
+                date: finalDate,
+                amount: -numAmount, 
+                category: `Transfer_To_${targetAccountId}`, // Encoded for perfectly accurate deletion reversal
+                note: `${fromAcc.name} → ${toAcc.name}`,
+                type: 'transfer',
+                account_id: selectedAccountId,
+                synced: 0,
+                is_shared: false,
+                is_installment: false,
+                is_deleted: 0
+              });
+            }
           }
         } else {
+          // Standard Expense / Income
           const account = await db.accounts.get(selectedAccountId);
 
           if (editData) {
@@ -214,7 +255,7 @@ export default function AddTransaction({ isOpen, onClose, editData }: Props) {
               synced: 0,
               is_shared: false,
               is_installment: false,
-              is_deleted: 0 // EXPLICITLY MARK AS ACTIVE
+              is_deleted: 0
             });
 
             if (account) {
