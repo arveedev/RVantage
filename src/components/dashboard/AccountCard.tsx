@@ -24,7 +24,7 @@ export default function AccountCard({ config, financialIntel, accounts, showAcco
     if (showAccounts) {
       timeoutId = setTimeout(() => {
         setShowAccounts(false);
-      }, 30000);
+      }, 10000);
     }
 
     return () => {
